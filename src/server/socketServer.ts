@@ -31,6 +31,7 @@ export class SocketServerManager {
         origin: '*',
         methods: ['GET', 'POST'],
       },
+      maxHttpBufferSize: 1e5, // 100KB payload limit for DoS mitigation
     });
 
     this.registerSocketEvents();
