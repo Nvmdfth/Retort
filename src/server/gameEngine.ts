@@ -9,11 +9,14 @@ import type {
   ClientGameState,
   HostGameState,
   ScoreDelta,
+  AdminRoomSummary,
 } from '../types/game';
 
 export const WRITING_DURATION = 60; // seconds
-export const VOTING_DURATION = 16;  // seconds
+export const VOTING_DURATION = 32;  // seconds (doubled per Quiplash specs)
 export const REVEAL_DURATION = 8;   // seconds
+export const INTERMISSION_DURATION = 10; // seconds
+export const TOTAL_ROUNDS = 3;
 
 // Secret Roasts ("Quip Pro Quo")
 const SECRET_ROASTS: Record<string, string> = {
@@ -58,6 +61,9 @@ export class GameEngine {
       phaseTimeRemaining: 0,
       phaseDuration: 0,
       round: 1,
+      totalRounds: TOTAL_ROUNDS,
+      isGameOver: false,
+      createdAt: Date.now(),
       players: { [hostPlayer.id]: hostPlayer },
       prompts: [],
       assignments: {},
@@ -498,7 +504,9 @@ export class GameEngine {
       phaseTimeRemaining: room.phaseTimeRemaining,
       phaseDuration: room.phaseDuration,
       round: room.round,
+      totalRounds: room.totalRounds,
       roundMultiplier,
+      isGameOver: room.isGameOver,
       selfPlayerId: playerId,
       isHost,
       players: playerList,
@@ -544,7 +552,7 @@ export class GameEngine {
       }
     }
 
-    if (room.phase === 'SCOREBOARD') {
+    if (room.phase === 'SCOREBOARD' || room.phase === 'ROUND_INTERMISSION') {
       const ranked = [...playerList]
         .sort((a, b) => b.score - a.score)
         .map((p, idx) => ({
@@ -572,7 +580,9 @@ export class GameEngine {
       phase: room.phase,
       phaseTimeRemaining: room.phaseTimeRemaining,
       round: room.round,
+      totalRounds: room.totalRounds,
       roundMultiplier,
+      isGameOver: room.isGameOver,
       players: playerList,
       submittedCount,
       totalPlayers: playerList.length,
@@ -607,7 +617,7 @@ export class GameEngine {
       }
     }
 
-    if (room.phase === 'SCOREBOARD') {
+    if (room.phase === 'SCOREBOARD' || room.phase === 'ROUND_INTERMISSION') {
       hostState.leaderboard = [...playerList]
         .sort((a, b) => b.score - a.score)
         .map((p, idx) => ({
@@ -619,5 +629,43 @@ export class GameEngine {
     }
 
     return hostState;
+  }
+
+  /**
+   * Produce silent admin summary for monitoring room lifecycle and moderation.
+   */
+  public static getAdminSummary(room: RoomState): AdminRoomSummary {
+    const activeDuel = room.duels[room.activeDuelIndex];
+    return {
+      roomCode: room.roomCode,
+      phase: room.phase,
+      round: room.round,
+      totalRounds: room.totalRounds,
+      isGameOver: room.isGameOver,
+      phaseTimeRemaining: room.phaseTimeRemaining,
+      createdAt: room.createdAt,
+      uptimeSeconds: Math.floor((Date.now() - room.createdAt) / 1000),
+      playerCount: Object.values(room.players).length,
+      activePlayers: Object.values(room.players).map((p) => ({
+        id: p.id,
+        nickname: p.nickname,
+        score: p.score,
+        isHost: p.isHost,
+        isConnected: p.isConnected,
+      })),
+      activePrompt: activeDuel ? activeDuel.promptText : undefined,
+      activeDuel: activeDuel
+        ? {
+            duelNumber: room.activeDuelIndex + 1,
+            totalDuels: room.duels.length,
+            textA: activeDuel.optionA.text,
+            textB: activeDuel.optionB.text,
+            authorA: activeDuel.optionA.authorNickname,
+            authorB: activeDuel.optionB.authorNickname,
+            votesCast: Object.keys(activeDuel.votes).length,
+            totalEligible: activeDuel.eligibleVoterIds.length,
+          }
+        : undefined,
+    };
   }
 }

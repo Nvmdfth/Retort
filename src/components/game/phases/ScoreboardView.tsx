@@ -8,18 +8,22 @@ import { useGameStore } from '@/stores/useGameStore';
 export const ScoreboardView: React.FC = () => {
   const { gameState, restartGame } = useGameStore();
 
+  const isGameOver = Boolean(gameState?.isGameOver);
+
   useEffect(() => {
-    confetti({
-      particleCount: 80,
-      spread: 90,
-      origin: { y: 0.4 },
-    });
-  }, []);
+    if (isGameOver) {
+      confetti({
+        particleCount: 80,
+        spread: 90,
+        origin: { y: 0.4 },
+      });
+    }
+  }, [isGameOver]);
 
   if (!gameState) return null;
 
   const leaderboard = gameState.leaderboard || [];
-  const winner = leaderboard[0];
+  const leader = leaderboard[0];
 
   return (
     <div className="flex-1 flex flex-col justify-between py-2 gap-4">
@@ -27,25 +31,33 @@ export const ScoreboardView: React.FC = () => {
         {/* Title */}
         <div className="text-center space-y-1">
           <span className="text-[10px] font-black tracking-widest uppercase text-emerald-400">
-            Final Standings
+            {isGameOver
+              ? 'Final Standings'
+              : `Round ${gameState.round} of ${gameState.totalRounds || 3} Complete`}
           </span>
-          <h1 className="text-2xl font-black text-white">Leaderboard</h1>
+          <h1 className="text-2xl font-black text-white">
+            {isGameOver ? 'Leaderboard' : 'Round Standings'}
+          </h1>
         </div>
 
-        {/* Winner Spotlight */}
-        {winner && (
+        {/* Leader / Winner Spotlight */}
+        {leader && (
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-gradient-to-b from-amber-500/20 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-5 text-center shadow-xl space-y-1"
+            className={`border-2 rounded-2xl p-5 text-center shadow-xl space-y-1 ${
+              isGameOver
+                ? 'bg-gradient-to-b from-amber-500/20 to-slate-900 border-amber-500/40'
+                : 'bg-gradient-to-b from-emerald-500/20 to-slate-900 border-emerald-500/40'
+            }`}
           >
-            <div className="text-3xl">👑</div>
+            <div className="text-3xl">{isGameOver ? '👑' : '🥇'}</div>
             <div className="text-xs uppercase font-extrabold tracking-wider text-amber-300">
-              Retort Champion
+              {isGameOver ? 'Retort Champion' : 'Current Round Leader'}
             </div>
-            <div className="text-xl font-black text-white">{winner.nickname}</div>
+            <div className="text-xl font-black text-white">{leader.nickname}</div>
             <div className="text-sm font-mono font-bold text-amber-400">
-              {winner.score.toLocaleString()} PTS
+              {leader.score.toLocaleString()} PTS
             </div>
           </motion.div>
         )}
@@ -86,16 +98,30 @@ export const ScoreboardView: React.FC = () => {
 
       {/* Action Tray */}
       <div className="pt-2">
-        {gameState.isHost ? (
-          <button
-            onClick={restartGame}
-            className="w-full py-4 rounded-xl font-black text-sm uppercase tracking-wider bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
-          >
-            Play Another Round &rarr;
-          </button>
+        {isGameOver ? (
+          gameState.isHost ? (
+            <button
+              onClick={restartGame}
+              className="w-full py-4 rounded-xl font-black text-sm uppercase tracking-wider bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
+            >
+              Play Another Game &rarr;
+            </button>
+          ) : (
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">
+              Waiting for the host to trigger a rematch...
+            </div>
+          )
         ) : (
-          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">
-            Waiting for the host to trigger a rematch...
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-emerald-500/30 text-center space-y-1">
+            <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              Round {gameState.round + 1} starting soon...
+            </div>
+            <p className="text-[11px] text-slate-400 font-medium">
+              {gameState.round === 1
+                ? 'Round 2 quips score DOUBLE points (2x)!'
+                : 'Round 3 finale quips score TRIPLE points (3x)!'}
+            </p>
           </div>
         )}
       </div>

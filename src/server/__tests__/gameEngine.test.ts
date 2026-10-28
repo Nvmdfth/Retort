@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GameEngine } from '../gameEngine';
+import { GameEngine, VOTING_DURATION, INTERMISSION_DURATION, TOTAL_ROUNDS } from '../gameEngine';
 import type { Player, RoomState } from '../../types/game';
 
 describe('Retort GameEngine - Quiplash Specification Conformance', () => {
@@ -220,5 +220,44 @@ describe('Retort GameEngine - Quiplash Specification Conformance', () => {
     // Default win awards 100% of base points (1000) without sweep bonus
     const winnerPoints = duel?.optionA.authorId === 'p1' ? result.pointsA : result.pointsB;
     expect(winnerPoints).toBe(1000);
+  });
+
+  test('3-Round Lifecycle & Double Voting Timer (32s) per Quiplash specs', () => {
+    // Voting duration must be doubled to 32 seconds
+    expect(VOTING_DURATION).toBe(32);
+    expect(INTERMISSION_DURATION).toBe(10);
+    expect(TOTAL_ROUNDS).toBe(3);
+
+    const p1 = createMockPlayer('p1', 'Alice', true);
+    const room = GameEngine.createRoom('TEST', p1);
+
+    expect(room.totalRounds).toBe(3);
+    expect(room.isGameOver).toBe(false);
+    expect(room.createdAt).toBeGreaterThan(0);
+
+    const clientState = GameEngine.getClientState(room, 'p1');
+    expect(clientState.totalRounds).toBe(3);
+    expect(clientState.isGameOver).toBe(false);
+
+    const hostState = GameEngine.getHostState(room);
+    expect(hostState.totalRounds).toBe(3);
+    expect(hostState.isGameOver).toBe(false);
+  });
+
+  test('Silent Admin Telemetry: Generates real-time inspection summary without affecting players', () => {
+    const p1 = createMockPlayer('p1', 'Alice', true);
+    const p2 = createMockPlayer('p2', 'Bob');
+
+    const room = GameEngine.createRoom('ADMN', p1);
+    room.players['p2'] = p2;
+
+    const summary = GameEngine.getAdminSummary(room);
+    expect(summary.roomCode).toBe('ADMN');
+    expect(summary.playerCount).toBe(2);
+    expect(summary.activePlayers.length).toBe(2);
+    expect(summary.round).toBe(1);
+    expect(summary.totalRounds).toBe(3);
+    expect(summary.isGameOver).toBe(false);
+    expect(summary.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 });

@@ -91,6 +91,8 @@ export const GameViewController: React.FC = () => {
                   return <DuelVotingView />;
                 case 'DUEL_REVEAL':
                   return <DuelRevealView />;
+                case 'ROUND_INTERMISSION':
+                  return <ScoreboardView />;
                 case 'SCOREBOARD':
                   return <ScoreboardView />;
                 default:

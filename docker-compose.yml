@@ -11,3 +11,7 @@ services:
       - NODE_ENV=production
       - PORT=9847
       - HOSTNAME=0.0.0.0
+      - ADMIN_SECRET=${ADMIN_SECRET:-RetortAdmin}
+    env_file:
+      - path: .env
+        required: false

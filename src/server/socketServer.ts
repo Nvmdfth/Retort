@@ -1,17 +1,27 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
+import { timingSafeEqual } from 'crypto';
 import {
   GameEngine,
   WRITING_DURATION,
   VOTING_DURATION,
   REVEAL_DURATION,
+  INTERMISSION_DURATION,
 } from './gameEngine';
 import type {
   RoomState,
   Player,
   ClientToServerEvents,
   ServerToClientEvents,
+  AdminRoomSummary,
 } from '../types/game';
+
+function isSecretValid(input: string, expected: string): boolean {
+  const a = Buffer.from(input);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 type CustomSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
@@ -57,6 +67,68 @@ export class SocketServerManager {
     }
   }
 
+  public getAllAdminSummaries(): AdminRoomSummary[] {
+    const list: AdminRoomSummary[] = [];
+    for (const room of this.rooms.values()) {
+      list.push(GameEngine.getAdminSummary(room));
+    }
+    return list;
+  }
+
+  public broadcastAdminSummaries() {
+    this.io.to('admin:dashboard').emit('admin:sync:rooms', this.getAllAdminSummaries());
+  }
+
+  public advanceRoomPhase(roomCode: string) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return;
+
+    this.clearRoomTimer(roomCode);
+
+    if (room.phase === 'WRITING') {
+      this.transitionToVoting(roomCode);
+    } else if (room.phase === 'DUEL_VOTING') {
+      this.transitionToReveal(roomCode);
+    } else if (room.phase === 'DUEL_REVEAL') {
+      if (room.activeDuelIndex + 1 < room.duels.length) {
+        room.activeDuelIndex += 1;
+        room.phase = 'DUEL_VOTING';
+        this.broadcastState(roomCode);
+        const nextDuel = room.duels[room.activeDuelIndex];
+        const isNextSpecial = nextDuel.isJinx || nextDuel.isForfeit;
+        const nextDuration = isNextSpecial ? 3 : nextDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+        this.startPhaseTimer(roomCode, nextDuration, () => {
+          this.transitionToReveal(roomCode);
+        });
+      } else {
+        if (room.round < room.totalRounds) {
+          room.phase = 'ROUND_INTERMISSION';
+          this.broadcastState(roomCode);
+          this.startPhaseTimer(roomCode, INTERMISSION_DURATION, () => {
+            room.round += 1;
+            GameEngine.startWritingPhase(room);
+            this.broadcastState(roomCode);
+            this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
+              this.transitionToVoting(roomCode);
+            });
+          });
+        } else {
+          room.phase = 'SCOREBOARD';
+          room.isGameOver = true;
+          this.broadcastState(roomCode);
+        }
+      }
+    } else if (room.phase === 'ROUND_INTERMISSION') {
+      room.round += 1;
+      GameEngine.startWritingPhase(room);
+      this.broadcastState(roomCode);
+      this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
+        this.transitionToVoting(roomCode);
+      });
+    }
+    this.broadcastAdminSummaries();
+  }
+
   private broadcastState(roomCode: string) {
     const room = this.rooms.get(roomCode);
     if (!room) return;
@@ -70,6 +142,9 @@ export class SocketServerManager {
     // Send host state to any host view connected to host:ROOM_CODE
     const hostState = GameEngine.getHostState(room);
     this.io.to(`host:${roomCode}`).emit('sync:host', hostState);
+
+    // Keep admin dashboard synced silently without notifying players
+    this.broadcastAdminSummaries();
   }
 
   private startPhaseTimer(
@@ -155,10 +230,28 @@ export class SocketServerManager {
           this.transitionToReveal(roomCode);
         });
       } else {
-        // All duels completed -> Scoreboard
-        room.phase = 'SCOREBOARD';
-        this.clearRoomTimer(roomCode);
-        this.broadcastState(roomCode);
+        // All duels in this round completed
+        if (room.round < room.totalRounds) {
+          // Automatic transition to round intermission
+          room.phase = 'ROUND_INTERMISSION';
+          this.broadcastState(roomCode);
+
+          this.startPhaseTimer(roomCode, INTERMISSION_DURATION, () => {
+            room.round += 1;
+            GameEngine.startWritingPhase(room);
+            this.broadcastState(roomCode);
+
+            this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
+              this.transitionToVoting(roomCode);
+            });
+          });
+        } else {
+          // All 3 rounds complete -> Finale Scoreboard (Game Over)
+          room.phase = 'SCOREBOARD';
+          room.isGameOver = true;
+          this.clearRoomTimer(roomCode);
+          this.broadcastState(roomCode);
+        }
       }
     });
   }
@@ -298,6 +391,17 @@ export class SocketServerManager {
             return;
           }
 
+          room.round = 1;
+          room.isGameOver = false;
+          Object.values(room.players).forEach((p) => {
+            p.score = 0;
+            p.hasSubmitted = false;
+          });
+          room.answers = [];
+          room.duels = [];
+          room.activeDuelIndex = 0;
+          room.recentScoreDeltas = [];
+
           const updatedRoom = GameEngine.startWritingPhase(room);
           this.rooms.set(currentRoomCode, updatedRoom);
 
@@ -313,7 +417,7 @@ export class SocketServerManager {
         }
       });
 
-      // Host restarts game / new round
+      // Host restarts game (rematch after 3 rounds complete)
       socket.on('game:restart', (callback) => {
         try {
           if (!currentRoomCode) {
@@ -326,8 +430,11 @@ export class SocketServerManager {
             return;
           }
 
-          if (room.phase !== 'SCOREBOARD') {
-            callback?.({ ok: false, error: 'Can only restart from the scoreboard' });
+          if (room.phase !== 'SCOREBOARD' || !room.isGameOver) {
+            callback?.({
+              ok: false,
+              error: 'Cannot restart until the entire 3-round game is completed',
+            });
             return;
           }
 
@@ -337,7 +444,17 @@ export class SocketServerManager {
             return;
           }
 
-          room.round += 1;
+          room.round = 1;
+          room.isGameOver = false;
+          Object.values(room.players).forEach((p) => {
+            p.score = 0;
+            p.hasSubmitted = false;
+          });
+          room.answers = [];
+          room.duels = [];
+          room.activeDuelIndex = 0;
+          room.recentScoreDeltas = [];
+
           const updatedRoom = GameEngine.startWritingPhase(room);
           this.rooms.set(currentRoomCode, updatedRoom);
 
@@ -420,6 +537,82 @@ export class SocketServerManager {
           }
         } catch (err) {
           console.error('[vote:cast error]', err);
+          callback?.({ ok: false });
+        }
+      });
+
+      // Admin authentication
+      socket.on('admin:auth', (data, callback) => {
+        try {
+          const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
+          const validSecret = process.env.ADMIN_SECRET || 'RetortAdmin';
+          if (isSecretValid(secret, validSecret)) {
+            socket.join('admin:dashboard');
+            callback?.({ ok: true });
+            socket.emit('admin:sync:rooms', this.getAllAdminSummaries());
+          } else {
+            callback?.({ ok: false, error: 'Invalid admin credentials' });
+          }
+        } catch (err) {
+          console.error('[admin:auth error]', err);
+          callback?.({ ok: false, error: 'Admin authentication error' });
+        }
+      });
+
+      // Admin list active rooms (enforces authenticated admin session)
+      socket.on('admin:rooms:list', (callback) => {
+        try {
+          if (!socket.rooms.has('admin:dashboard')) {
+            callback?.([]);
+            return;
+          }
+          callback?.(this.getAllAdminSummaries());
+        } catch (err) {
+          callback?.([]);
+        }
+      });
+
+      // Admin terminate game room (enforces authenticated admin session)
+      socket.on('admin:room:terminate', (data, callback) => {
+        try {
+          if (!socket.rooms.has('admin:dashboard')) {
+            callback?.({ ok: false });
+            return;
+          }
+          const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
+          if (!roomCode || !this.rooms.has(roomCode)) {
+            callback?.({ ok: false });
+            return;
+          }
+          this.clearRoomTimer(roomCode);
+          this.io.to(`room:${roomCode}`).emit('room:terminated', {
+            message: `Room ${roomCode} has been closed by an administrator.`,
+          });
+          this.rooms.delete(roomCode);
+          this.broadcastAdminSummaries();
+          callback?.({ ok: true });
+        } catch (err) {
+          console.error('[admin:room:terminate error]', err);
+          callback?.({ ok: false });
+        }
+      });
+
+      // Admin force advance phase (enforces authenticated admin session)
+      socket.on('admin:room:advance', (data, callback) => {
+        try {
+          if (!socket.rooms.has('admin:dashboard')) {
+            callback?.({ ok: false });
+            return;
+          }
+          const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
+          if (!roomCode || !this.rooms.has(roomCode)) {
+            callback?.({ ok: false });
+            return;
+          }
+          this.advanceRoomPhase(roomCode);
+          callback?.({ ok: true });
+        } catch (err) {
+          console.error('[admin:room:advance error]', err);
           callback?.({ ok: false });
         }
       });

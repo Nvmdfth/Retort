@@ -99,6 +99,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }, 4000);
     });
 
+    socket.on('room:terminated', ({ message }) => {
+      set({ errorMessage: message, gameState: null });
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+      }
+    });
+
     set({ socket });
   },
 

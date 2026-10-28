@@ -3,6 +3,7 @@ export type GamePhase =
   | 'WRITING'
   | 'DUEL_VOTING'
   | 'DUEL_REVEAL'
+  | 'ROUND_INTERMISSION'
   | 'SCOREBOARD';
 
 export interface Player {
@@ -84,6 +85,9 @@ export interface RoomState {
   phaseTimeRemaining: number;
   phaseDuration: number;
   round: number;              // 1 = Normal, 2 = Doubled, 3 = Finale
+  totalRounds: number;        // Default: 3
+  isGameOver: boolean;        // True only when all 3 rounds complete
+  createdAt: number;
   players: Record<string, Player>;
   prompts: Prompt[];
   assignments: Record<string, string[]>; // playerId -> promptIds
@@ -101,7 +105,9 @@ export interface ClientGameState {
   phaseTimeRemaining: number;
   phaseDuration: number;
   round: number;
+  totalRounds: number;
   roundMultiplier: number;           // 1x in R1, 2x in R2, 3x in R3
+  isGameOver: boolean;               // True only when round 3 ends
   selfPlayerId: string;
   isHost: boolean;
   players: Player[];
@@ -146,7 +152,9 @@ export interface HostGameState {
   phase: GamePhase;
   phaseTimeRemaining: number;
   round: number;
+  totalRounds: number;
   roundMultiplier: number;
+  isGameOver: boolean;
   players: Player[];
   submittedCount: number;
   totalPlayers: number;
@@ -181,6 +189,37 @@ export interface HostGameState {
   }>;
 }
 
+/** Admin real-time monitoring structure */
+export interface AdminRoomSummary {
+  roomCode: string;
+  phase: GamePhase;
+  round: number;
+  totalRounds: number;
+  isGameOver: boolean;
+  phaseTimeRemaining: number;
+  createdAt: number;
+  uptimeSeconds: number;
+  playerCount: number;
+  activePlayers: Array<{
+    id: string;
+    nickname: string;
+    score: number;
+    isHost: boolean;
+    isConnected: boolean;
+  }>;
+  activePrompt?: string;
+  activeDuel?: {
+    duelNumber: number;
+    totalDuels: number;
+    textA: string;
+    textB: string;
+    authorA?: string;
+    authorB?: string;
+    votesCast: number;
+    totalEligible: number;
+  };
+}
+
 export interface ClientToServerEvents {
   'room:create': (data: { nickname: string }, callback: (res: { ok: boolean; roomCode?: string; error?: string }) => void) => void;
   'room:join': (data: { roomCode: string; nickname: string }, callback: (res: { ok: boolean; error?: string }) => void) => void;
@@ -188,6 +227,11 @@ export interface ClientToServerEvents {
   'game:restart': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   'answer:submit': (data: { promptId: string; text: string; isSafetyQuip?: boolean }, callback?: (res: { ok: boolean }) => void) => void;
   'vote:cast': (data: { duelId: string; choice: 'A' | 'B' }, callback?: (res: { ok: boolean }) => void) => void;
+  // Admin commands
+  'admin:auth': (data: { secret: string }, callback: (res: { ok: boolean; error?: string }) => void) => void;
+  'admin:rooms:list': (callback: (rooms: AdminRoomSummary[]) => void) => void;
+  'admin:room:terminate': (data: { roomCode: string }, callback: (res: { ok: boolean }) => void) => void;
+  'admin:room:advance': (data: { roomCode: string }, callback: (res: { ok: boolean }) => void) => void;
 }
 
 export interface ServerToClientEvents {
@@ -195,4 +239,6 @@ export interface ServerToClientEvents {
   'sync:host': (state: HostGameState) => void;
   'timer:tick': (data: { remaining: number }) => void;
   'error:toast': (data: { message: string }) => void;
+  'room:terminated': (data: { message: string }) => void;
+  'admin:sync:rooms': (rooms: AdminRoomSummary[]) => void;
 }

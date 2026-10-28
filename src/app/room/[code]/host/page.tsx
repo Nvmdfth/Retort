@@ -242,8 +242,8 @@ function HostDashboardContent() {
             </motion.div>
           )}
 
-          {/* SCOREBOARD VIEW */}
-          {phase === 'SCOREBOARD' && leaderboard && (
+          {/* SCOREBOARD & INTERMISSION VIEW */}
+          {(phase === 'SCOREBOARD' || phase === 'ROUND_INTERMISSION') && leaderboard && (
             <motion.div
               key="host-scoreboard"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -253,9 +253,19 @@ function HostDashboardContent() {
             >
               <div className="text-center space-y-2">
                 <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-400">
-                  Game Over
+                  {phase === 'SCOREBOARD'
+                    ? 'Game Over'
+                    : `Round ${hostState.round} of ${hostState.totalRounds || 3} Complete`}
                 </span>
-                <h1 className="text-5xl font-black text-white">Grand Scoreboard</h1>
+                <h1 className="text-5xl font-black text-white">
+                  {phase === 'SCOREBOARD' ? 'Grand Scoreboard' : 'Current Standings'}
+                </h1>
+                {phase === 'ROUND_INTERMISSION' && (
+                  <p className="text-sm font-semibold text-emerald-300">
+                    Next round starts in {hostState.phaseTimeRemaining}s &bull; Points are{' '}
+                    {hostState.round === 1 ? 'DOUBLED (2x)' : 'TRIPLED (3x - Finale)'}!
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 gap-3 max-h-[400px] overflow-y-auto">

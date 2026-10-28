@@ -193,4 +193,116 @@ describe('Retort Socket Server Real-Time Integration', () => {
     expect(rev1.currentDuel?.optionB.authorNickname).toBeDefined();
     expect(rev1.currentDuel?.results).toBeDefined();
   }, 30000);
+
+  test('Restart Guard: Host cannot restart game until all 3 rounds are completed', async () => {
+    const url = `http://127.0.0.1:${port}`;
+    const host = Client(url, { transports: ['websocket'] });
+    await new Promise<void>((res) => host.on('connect', res));
+
+    const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((res) => {
+      host.emit('room:create', { nickname: 'Host' }, res);
+    });
+    expect(createRes.ok).toBe(true);
+
+    // Attempt restart while in LOBBY (not game over)
+    const restartRes = await new Promise<{ ok: boolean; error?: string }>((res) => {
+      host.emit('game:restart', res);
+    });
+    expect(restartRes.ok).toBe(false);
+    expect(restartRes.error).toContain('Cannot restart');
+
+    host.disconnect();
+  });
+
+  test('Silent Admin Interface: Auth, Telemetry, Phase Advance, & Room Termination', async () => {
+    const url = `http://127.0.0.1:${port}`;
+    const adminSocket = Client(url, { transports: ['websocket'] });
+    const playerSocket = Client(url, { transports: ['websocket'] });
+
+    await Promise.all([
+      new Promise<void>((res) => adminSocket.on('connect', res)),
+      new Promise<void>((res) => playerSocket.on('connect', res)),
+    ]);
+
+    // 1. Create a game room
+    const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((res) => {
+      playerSocket.emit('room:create', { nickname: 'Player1' }, res);
+    });
+    const roomCode = createRes.roomCode!;
+
+    // 2. Reject bad admin authentication
+    const badAuth = await new Promise<{ ok: boolean; error?: string }>((res) => {
+      adminSocket.emit('admin:auth', { secret: 'wrong-secret' }, res);
+    });
+    expect(badAuth.ok).toBe(false);
+    expect(badAuth.error).toBeDefined();
+
+    // 2b. Unauthenticated socket cannot execute admin commands (Security Guardrail)
+    const unauthorizedList = await new Promise<any[]>((res) => {
+      adminSocket.emit('admin:rooms:list', res);
+    });
+    expect(unauthorizedList).toEqual([]);
+
+    const unauthorizedTerm = await new Promise<{ ok: boolean }>((res) => {
+      adminSocket.emit('admin:room:terminate', { roomCode }, res);
+    });
+    expect(unauthorizedTerm.ok).toBe(false);
+
+    const unauthorizedAdvance = await new Promise<{ ok: boolean }>((res) => {
+      adminSocket.emit('admin:room:advance', { roomCode }, res);
+    });
+    expect(unauthorizedAdvance.ok).toBe(false);
+
+    // 3. Successful admin authentication
+    const goodAuth = await new Promise<{ ok: boolean }>((res) => {
+      adminSocket.emit('admin:auth', { secret: 'RetortAdmin' }, res);
+    });
+    expect(goodAuth.ok).toBe(true);
+
+    // 4. Admin lists rooms silently
+    const roomsList = await new Promise<any[]>((res) => {
+      adminSocket.emit('admin:rooms:list', res);
+    });
+    const monitoredRoom = roomsList.find((r) => r.roomCode === roomCode);
+    expect(monitoredRoom).toBeDefined();
+    expect(monitoredRoom.playerCount).toBe(1);
+    expect(monitoredRoom.activePlayers[0].nickname).toBe('Player1');
+
+    // 5. Player socket NEVER sees admin in room players (Silent Observer Guarantee)
+    const clientState = await new Promise<ClientGameState>((res) => {
+      playerSocket.emit('room:join', { roomCode, nickname: 'Player1' }, () => {});
+      playerSocket.on('sync:state', (s) => res(s));
+    });
+    // Player list must ONLY contain Player1, NEVER the admin
+    expect(clientState.players.length).toBe(1);
+    expect(clientState.players[0].nickname).toBe('Player1');
+
+    // 6. Admin advances room phase
+    const advanceRes = await new Promise<{ ok: boolean }>((res) => {
+      adminSocket.emit('admin:room:advance', { roomCode }, res);
+    });
+    expect(advanceRes.ok).toBe(true);
+
+    // 7. Admin terminates room -> Player receives room:terminated event
+    const termPromise = new Promise<{ message: string }>((res) => {
+      playerSocket.on('room:terminated', res);
+    });
+
+    const terminateRes = await new Promise<{ ok: boolean }>((res) => {
+      adminSocket.emit('admin:room:terminate', { roomCode }, res);
+    });
+    expect(terminateRes.ok).toBe(true);
+
+    const termEvent = await termPromise;
+    expect(termEvent.message).toContain('closed by an administrator');
+
+    // 8. Room is deleted from active rooms list
+    const updatedRooms = await new Promise<any[]>((res) => {
+      adminSocket.emit('admin:rooms:list', res);
+    });
+    expect(updatedRooms.some((r) => r.roomCode === roomCode)).toBe(false);
+
+    adminSocket.disconnect();
+    playerSocket.disconnect();
+  });
 });
