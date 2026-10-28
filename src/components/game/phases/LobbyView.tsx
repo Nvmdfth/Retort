@@ -14,13 +14,60 @@ export const LobbyView: React.FC = () => {
   const isHost = gameState.isHost;
   const canStart = players.length >= 2;
 
-  const copyInvite = () => {
-    if (typeof window !== 'undefined') {
-      const url = `${window.location.origin}/?code=${gameState.roomCode}`;
-      navigator.clipboard.writeText(url);
+  const copyInvite = async () => {
+    if (typeof window === 'undefined') return;
+    const url = `${window.location.origin}/?code=${gameState.roomCode}`;
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+      } else {
+        // Fallback for non-secure contexts (LAN IP / HTTP)
+        const textArea = document.createElement('textarea');
+        textArea.value = url;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (successful) {
+          setCopied(true);
+        } else {
+          throw new Error('execCommand copy returned false');
+        }
+      }
+    } catch {
+      window.prompt('Copy room invite link:', url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     }
+
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const shareInvite = async () => {
+    if (typeof window === 'undefined') return;
+    const url = `${window.location.origin}/?code=${gameState.roomCode}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Join Retort Room ${gameState.roomCode}`,
+          text: `Join our Retort punchline party game! Room Code: ${gameState.roomCode}`,
+          url,
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    // Fallback to copy if native share cancelled or unavailable
+    await copyInvite();
   };
 
   return (
@@ -31,15 +78,33 @@ export const LobbyView: React.FC = () => {
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-1">
             Room Code
           </p>
-          <div className="text-4xl font-black tracking-wider text-emerald-400 font-mono mb-2">
+          <div className="text-4xl font-black tracking-wider text-emerald-400 font-mono mb-3">
             {gameState.roomCode}
           </div>
-          <button
-            onClick={copyInvite}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700"
-          >
-            {copied ? 'Copied Invite Link!' : 'Copy Invite Link'}
-          </button>
+
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={copyInvite}
+              className={`cursor-pointer select-none active:scale-95 text-xs font-bold px-3.5 py-2 rounded-xl transition-all border shadow-sm ${
+                copied
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+            >
+              {copied ? 'Copied to Clipboard! ✓' : '📋 Copy Invite Link'}
+            </button>
+
+            {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+              <button
+                type="button"
+                onClick={shareInvite}
+                className="cursor-pointer select-none active:scale-95 text-xs font-bold px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-all"
+              >
+                📲 Share
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Connected Roster */}
@@ -97,11 +162,12 @@ export const LobbyView: React.FC = () => {
       <div className="space-y-3 pt-2">
         {isHost ? (
           <button
+            type="button"
             onClick={startGame}
             disabled={!canStart}
             className={`w-full py-4 rounded-xl font-black text-base tracking-wide uppercase transition-all shadow-lg ${
               canStart
-                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 active:scale-[0.98] shadow-emerald-500/20'
+                ? 'cursor-pointer bg-emerald-500 hover:bg-emerald-400 text-slate-950 active:scale-[0.98] shadow-emerald-500/20'
                 : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
             }`}
           >

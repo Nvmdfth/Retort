@@ -59,4 +59,22 @@ test.describe('Landing & Lobby Navigation', () => {
     const errorToast = page.getByText(/Room not found/i);
     await expect(errorToast).toBeVisible({ timeout: 5000 });
   });
+
+  test('creates room and allows clicking Copy Invite Link with visual confirmation', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create Room' }).first().click();
+    await page.getByPlaceholder('e.g. Quipster').fill('HostTester');
+    await page.locator('form button[type="submit"]').click();
+
+    await page.waitForURL(/\/room\/[A-Z0-9]{4}/);
+
+    const copyBtn = page.getByRole('button', { name: /Copy Invite Link/i });
+    await expect(copyBtn).toBeVisible();
+    await copyBtn.click();
+
+    // Visual confirmation state
+    await expect(page.getByText('Copied to Clipboard! ✓')).toBeVisible({ timeout: 5000 });
+  });
 });
