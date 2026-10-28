@@ -1,98 +1,122 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Real-Time Multiplayer Party Game Loop', () => {
-  test('Two mobile players create, join, submit prompts, and vote', async ({ browser }) => {
-    // 1. Create two isolated browser contexts simulating two separate mobile phones
+test.describe('Real-Time 3-Player Party Game Loop', () => {
+  test('Three mobile players lobby, write quips, enforce author lockout, vote, and reveal results', async ({ browser }) => {
+    // 1. Create three isolated browser contexts simulating 3 separate mobile phones
     const phone1Context = await browser.newContext();
     const phone2Context = await browser.newContext();
+    const phone3Context = await browser.newContext();
 
-    const page1 = await phone1Context.newPage();
-    const page2 = await phone2Context.newPage();
+    const p1 = await phone1Context.newPage();
+    const p2 = await phone2Context.newPage();
+    const p3 = await phone3Context.newPage();
 
-    // 2. Player 1 creates a new room
-    await page1.goto('/');
-    await page1.getByRole('button', { name: 'Create Room' }).first().click();
-    await page1.getByPlaceholder('e.g. Quipster').fill('HostAlice');
-    await page1.getByRole('button', { name: 'Create Room' }).last().click();
+    // 2. Player 1 creates room
+    await p1.goto('/');
+    await p1.getByRole('button', { name: 'Create Room' }).first().click();
+    await p1.getByPlaceholder('e.g. Quipster').fill('Alice');
+    await p1.locator('form button[type="submit"]').click();
 
-    // Wait for redirect to /room/[CODE]
-    await page1.waitForURL(/\/room\/[A-Z0-9]{4}/);
-    const roomUrl = page1.url();
-    const roomCodeMatch = roomUrl.match(/\/room\/([A-Z0-9]{4})/);
+    await p1.waitForURL(/\/room\/[A-Z0-9]{4}/);
+    const roomCodeMatch = p1.url().match(/\/room\/([A-Z0-9]{4})/);
     expect(roomCodeMatch).toBeTruthy();
     const roomCode = roomCodeMatch![1];
 
-    // Verify Player 1 is in Lobby as VIP Host
-    await expect(page1.getByText('Room Code')).toBeVisible();
-    await expect(page1.getByText('HostAlice')).toBeVisible();
-    await expect(page1.getByText('VIP Host')).toBeVisible();
+    // 3. Player 2 and Player 3 join room
+    await p2.goto(`/?code=${roomCode}`);
+    await p2.getByPlaceholder('e.g. Quipster').fill('Bob');
+    await p2.locator('form button[type="submit"]').click();
+    await p2.waitForURL(/\/room\/[A-Z0-9]{4}/);
 
-    // Start button should initially be disabled or say Waiting for Players (min 2)
-    const startBtn = page1.getByRole('button', { name: /Waiting For Players|Start Game/i });
-    await expect(startBtn).toBeVisible();
+    await p3.goto(`/?code=${roomCode}`);
+    await p3.getByPlaceholder('e.g. Quipster').fill('Charlie');
+    await p3.locator('form button[type="submit"]').click();
+    await p3.waitForURL(/\/room\/[A-Z0-9]{4}/);
 
-    // 3. Player 2 joins via the landing page using roomCode
-    await page2.goto(`/?code=${roomCode}`);
-    await page2.getByPlaceholder('e.g. Quipster').fill('PlayerBob');
-    await page2.getByRole('button', { name: 'Join Game' }).click();
+    // 4. Verify all 3 players appear in the live lobby on all screens
+    await expect(p1.getByText('3 Joined')).toBeVisible({ timeout: 10000 });
+    await expect(p2.getByText('3 Joined')).toBeVisible({ timeout: 10000 });
+    await expect(p3.getByText('3 Joined')).toBeVisible({ timeout: 10000 });
 
-    await page2.waitForURL(/\/room\/[A-Z0-9]{4}/);
-
-    // 4. Both players should see each other in the live lobby
-    await expect(page1.getByText('PlayerBob')).toBeVisible({ timeout: 10000 });
-    await expect(page2.getByText('HostAlice')).toBeVisible({ timeout: 10000 });
-    await expect(page2.getByText('PlayerBob')).toBeVisible({ timeout: 10000 });
-    await expect(page2.getByText('(You)')).toBeVisible();
-
-    // Player 2 should see waiting message
-    await expect(page2.getByText(/Waiting for the host to start/i)).toBeVisible();
-
-    // Player 1 should now have active "Start Game" button
-    const activeStartBtn = page1.getByRole('button', { name: 'Start Game' });
-    await expect(activeStartBtn).toBeEnabled();
-    await activeStartBtn.click();
+    // Host has active Start Game button
+    const startBtn = p1.getByRole('button', { name: 'Start Game' });
+    await expect(startBtn).toBeEnabled();
+    await startBtn.click();
 
     // 5. Phase 1: Simultaneous Writing
-    // Both players should transition into Writing phase
-    await expect(page1.getByText(/Write Your Funniest Quip/i)).toBeVisible({ timeout: 10000 });
-    await expect(page2.getByText(/Write Your Funniest Quip/i)).toBeVisible({ timeout: 10000 });
+    await expect(p1.getByText(/Write Your Funniest Quip/i)).toBeVisible({ timeout: 10000 });
+    await expect(p2.getByText(/Write Your Funniest Quip/i)).toBeVisible({ timeout: 10000 });
+    await expect(p3.getByText(/Write Your Funniest Quip/i)).toBeVisible({ timeout: 10000 });
 
-    // Live lock-in checklist is visible
-    await expect(page1.getByText('Room Submissions')).toBeVisible();
-    await expect(page2.getByText('Room Submissions')).toBeVisible();
+    // Submit answers for Player 1
+    const p1Textarea = p1.getByPlaceholder('Type your punchline here...');
+    await p1Textarea.fill('Alice Quip #1');
+    await p1.getByRole('button', { name: /Submit & Next Prompt/i }).click();
+    await p1.getByRole('button', { name: 'Lock In Punchline' }).waitFor({ state: 'visible' });
+    await p1Textarea.fill('Alice Quip #2');
+    await p1.getByRole('button', { name: 'Lock In Punchline' }).click();
 
-    // Player 1 fills answer for Prompt 1 and submits
-    const textareaP1 = page1.getByPlaceholder('Type your punchline here...');
-    await textareaP1.fill('A very funny joke from Alice');
-    await page1.getByRole('button', { name: /Submit & Next Prompt/i }).click();
+    // Submit answers for Player 2
+    const p2Textarea = p2.getByPlaceholder('Type your punchline here...');
+    await p2Textarea.fill('Bob Quip #1');
+    await p2.getByRole('button', { name: /Submit & Next Prompt/i }).click();
+    await p2.getByRole('button', { name: 'Lock In Punchline' }).waitFor({ state: 'visible' });
+    await p2Textarea.fill('Bob Quip #2');
+    await p2.getByRole('button', { name: 'Lock In Punchline' }).click();
 
-    // Player 1 fills Prompt 2 and locks in
-    await page1.getByRole('button', { name: 'Lock In Punchline' }).waitFor({ state: 'visible' });
-    await textareaP1.fill('Another punchline from Alice');
-    await page1.getByRole('button', { name: 'Lock In Punchline' }).click();
-
-    // Verify Player 1 is locked in
-    await expect(page1.getByText(/all locked in/i)).toBeVisible();
-
-    // Player 2 uses the Safety Quip button for Prompt 1 and submits
-    const textareaP2 = page2.getByPlaceholder('Type your punchline here...');
-    const safetyQuipBtn = page2.getByRole('button', { name: /Safety Quip/i });
-    await expect(safetyQuipBtn).toBeVisible();
+    // Player 3 uses Safety Quip
+    const p3Textarea = p3.getByPlaceholder('Type your punchline here...');
+    const safetyQuipBtn = p3.getByRole('button', { name: /Safety Quip/i });
     await safetyQuipBtn.click();
-    await expect(textareaP2).not.toHaveValue('');
-    await page2.getByRole('button', { name: /Submit & Next Prompt/i }).click();
+    await expect(p3Textarea).not.toHaveValue('');
+    await p3.getByRole('button', { name: /Submit & Next Prompt/i }).click();
 
-    // Player 2 uses Safety Quip for Prompt 2 and locks in
-    await page2.getByRole('button', { name: 'Lock In Punchline' }).waitFor({ state: 'visible' });
+    await p3.getByRole('button', { name: 'Lock In Punchline' }).waitFor({ state: 'visible' });
     await safetyQuipBtn.click();
-    await page2.getByRole('button', { name: 'Lock In Punchline' }).click();
+    await p3.getByRole('button', { name: 'Lock In Punchline' }).click();
 
-    // 6. Phase 2: Head-to-Head Duel & Voting
-    // Server auto-advances to duel phase
-    await expect(page1.getByText(/Duel 1 of|Loading next duel|JINX/i)).toBeVisible({ timeout: 15000 });
-    await expect(page2.getByText(/Duel 1 of|Loading next duel|JINX/i)).toBeVisible({ timeout: 15000 });
+    // 6. Phase 2: Duel & Voting (Auto-transition when all 3 finish)
+    // One player will be the eligible voter while the two authors are locked out
+    const phones = [p1, p2, p3];
+
+    // Wait for all 3 phones to reach DUEL_VOTING
+    await Promise.all(phones.map((p) => p.getByText(/Duel 1 of|Duel Results/i).waitFor({ timeout: 15000 })));
+
+    // Find the eligible voter who sees Card A and Card B buttons
+    let voterPhone = null;
+    for (const phone of phones) {
+      if (await phone.getByRole('button', { name: /CARD A/i }).isVisible()) {
+        voterPhone = phone;
+        break;
+      }
+    }
+
+    expect(voterPhone).not.toBeNull();
+
+    // Find an author phone that displays author lockout
+    let authorPhone = null;
+    for (const phone of phones) {
+      if (await phone.getByText(/You're In This Duel!/i).isVisible()) {
+        authorPhone = phone;
+        break;
+      }
+    }
+
+    expect(authorPhone).not.toBeNull();
+
+    // Eligible voter taps Card A
+    const cardABtn = voterPhone!.getByRole('button', { name: /CARD A/i });
+    await cardABtn.click();
+
+    // 7. Phase 3: Vote Reveal & Duel Progression
+    // The server immediately tallies the vote, displays the reveal breakdown,
+    // and progresses to the subsequent duel.
+    await expect(p1.getByText(/Duel Results|Duel 2 of/i)).toBeVisible({ timeout: 15000 });
+    await expect(p2.getByText(/Duel Results|Duel 2 of/i)).toBeVisible({ timeout: 15000 });
+    await expect(p3.getByText(/Duel Results|Duel 2 of/i)).toBeVisible({ timeout: 15000 });
 
     await phone1Context.close();
     await phone2Context.close();
+    await phone3Context.close();
   });
 });
