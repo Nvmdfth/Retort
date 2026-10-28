@@ -20,19 +20,32 @@ A modern, real-time, mobile-first party game web app built with Next.js App Rout
 ### Prerequisites
 - [Bun](https://bun.sh/) 1.1+ (or Node.js 20+)
 
-### Running Locally
+### Running with Docker Compose (Port 9847)
+
+```bash
+# Build and run container in background
+docker compose up -d
+
+# View live logs
+docker compose logs -f
+
+# Stop container
+docker compose down
+```
+
+Visit on your phone or local network:
+- Player Web UI: `http://<your-ip>:9847`
+- TV / Projector Host Route: `http://<your-ip>:9847/room/[CODE]/host`
+
+### Running Locally with Bun
 
 ```bash
 # Install dependencies
 bun install
 
-# Start integrated server (Next.js App Router + Socket.io on port 3000)
-bun dev
+# Start integrated server (Next.js App Router + Socket.io on port 9847)
+PORT=9847 bun dev
 ```
-
-Visit:
-- Mobile Player Client: `http://localhost:3000`
-- Optional Host/Projector Dashboard: `http://localhost:3000/room/[CODE]/host`
 
 ### Testing & Verification
 

@@ -1,0 +1,8 @@
+.git
+.next
+node_modules
+.system_generated
+*.pdf
+.DS_Store
+.env.local
+coverage

@@ -1,0 +1,13 @@
+services:
+  retort:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: retort
+    restart: unless-stopped
+    ports:
+      - "9847:9847"
+    environment:
+      - NODE_ENV=production
+      - PORT=9847
+      - HOSTNAME=0.0.0.0
