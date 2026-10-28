@@ -1,0 +1,129 @@
+'use client';
+
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
+import { useGameStore } from '@/stores/useGameStore';
+
+export const LobbyView: React.FC = () => {
+  const { gameState, startGame } = useGameStore();
+  const [copied, setCopied] = useState(false);
+
+  if (!gameState) return null;
+
+  const players = gameState.players || [];
+  const isHost = gameState.isHost;
+  const canStart = players.length >= 2;
+
+  const copyInvite = () => {
+    if (typeof window !== 'undefined') {
+      const url = `${window.location.origin}/?code=${gameState.roomCode}`;
+      navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col justify-between py-2 gap-4">
+      <div className="space-y-4">
+        {/* Room Banner */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 text-center shadow-lg">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-1">
+            Room Code
+          </p>
+          <div className="text-4xl font-black tracking-wider text-emerald-400 font-mono mb-2">
+            {gameState.roomCode}
+          </div>
+          <button
+            onClick={copyInvite}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700"
+          >
+            {copied ? 'Copied Invite Link!' : 'Copy Invite Link'}
+          </button>
+        </div>
+
+        {/* Connected Roster */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Players In Lobby
+            </span>
+            <span className="text-xs font-mono font-bold text-emerald-400">
+              {players.length} Joined
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-y-auto pr-1">
+            {players.map((p, idx) => (
+              <motion.div
+                key={p.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: idx * 0.05 }}
+                className={`flex items-center justify-between p-3 rounded-xl border ${
+                  p.id === gameState.selfPlayerId
+                    ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-100'
+                    : 'bg-slate-900 border-slate-800 text-slate-200'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center font-black text-slate-950 text-sm shadow">
+                    {p.nickname.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div>
+                    <span className="font-bold text-sm block leading-tight">
+                      {p.nickname}
+                    </span>
+                    {p.id === gameState.selfPlayerId && (
+                      <span className="text-[10px] text-emerald-400 font-medium">
+                        (You)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {p.isHost && (
+                  <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                    VIP Host
+                  </span>
+                )}
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Action Tray */}
+      <div className="space-y-3 pt-2">
+        {isHost ? (
+          <button
+            onClick={startGame}
+            disabled={!canStart}
+            className={`w-full py-4 rounded-xl font-black text-base tracking-wide uppercase transition-all shadow-lg ${
+              canStart
+                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 active:scale-[0.98] shadow-emerald-500/20'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+            }`}
+          >
+            {canStart ? 'Start Game' : 'Waiting For Players (Min 2)'}
+          </button>
+        ) : (
+          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">
+            Waiting for the host to start the match...
+          </div>
+        )}
+
+        <div className="text-center">
+          <a
+            href={`/room/${gameState.roomCode}/host`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-medium text-slate-400 hover:text-slate-200 underline underline-offset-4"
+          >
+            Open Projector / TV View &rarr;
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+};
