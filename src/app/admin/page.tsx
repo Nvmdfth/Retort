@@ -24,6 +24,10 @@ export default function AdminDashboardPage() {
       autoConnect: true,
     });
 
+    s.on('connect_error', (err) => {
+      console.warn('[Admin socket connection error]', err.message);
+    });
+
     s.on('admin:sync:rooms', (updatedRooms) => {
       setRooms(updatedRooms);
     });
@@ -37,17 +41,26 @@ export default function AdminDashboardPage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!socket) return;
+    if (!socket) {
+      setAuthError('Connection initializing, please retry in a moment...');
+      return;
+    }
     setAuthError(null);
     setIsBusy(true);
 
-    socket.emit('admin:auth', { secret }, (res) => {
+    const timer = setTimeout(() => {
       setIsBusy(false);
-      if (res.ok) {
+      setAuthError('Authentication timed out. Ensure the server is reachable.');
+    }, 5000);
+
+    socket.emit('admin:auth', { secret }, (res) => {
+      clearTimeout(timer);
+      setIsBusy(false);
+      if (res?.ok) {
         setIsAuthenticated(true);
         setStatusMessage('Authenticated as Administrator.');
       } else {
-        setAuthError(res.error || 'Invalid admin credentials');
+        setAuthError(res?.error || 'Invalid admin credentials');
       }
     });
   };

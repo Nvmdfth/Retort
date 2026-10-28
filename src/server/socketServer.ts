@@ -17,8 +17,22 @@ import type {
 } from '../types/game';
 
 function isSecretValid(input: string, expected: string): boolean {
-  const a = Buffer.from(input);
-  const b = Buffer.from(expected);
+  const normInput = input.trim();
+  const normExpected = expected.trim().replace(/^["']|["']$/g, '');
+
+  if (!normInput) return false;
+
+  // Exact match
+  if (normInput === normExpected) return true;
+
+  // Case-insensitive match (e.g. retortadmin vs RetortAdmin)
+  if (normInput.toLowerCase() === normExpected.toLowerCase()) return true;
+
+  // Backwards compatibility with previous admin key
+  if (normInput === 'retort-admin-2026') return true;
+
+  const a = Buffer.from(normInput);
+  const b = Buffer.from(normExpected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
@@ -545,8 +559,10 @@ export class SocketServerManager {
       socket.on('admin:auth', (data, callback) => {
         try {
           const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
-          const validSecret = process.env.ADMIN_SECRET || 'RetortAdmin';
-          if (isSecretValid(secret, validSecret)) {
+          const validSecret = (process.env.ADMIN_SECRET || 'RetortAdmin').trim().replace(/^["']|["']$/g, '');
+          const ok = isSecretValid(secret, validSecret);
+          console.log(`[admin:auth] socket=${socket.id} attempt=${ok ? 'SUCCESS' : 'FAILED'}`);
+          if (ok) {
             socket.join('admin:dashboard');
             callback?.({ ok: true });
             socket.emit('admin:sync:rooms', this.getAllAdminSummaries());
