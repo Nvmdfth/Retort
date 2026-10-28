@@ -104,7 +104,7 @@ export const ScoreboardView: React.FC = () => {
               onClick={restartGame}
               className="w-full py-4 rounded-xl font-black text-sm uppercase tracking-wider bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
             >
-              Play Another Game &rarr;
+              Play Another Game →
             </button>
           ) : (
             <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">

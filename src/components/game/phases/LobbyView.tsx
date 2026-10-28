@@ -186,7 +186,7 @@ export const LobbyView: React.FC = () => {
             rel="noopener noreferrer"
             className="text-[11px] font-medium text-slate-400 hover:text-slate-200 underline underline-offset-4"
           >
-            Open Projector / TV View &rarr;
+            Open Projector / TV View →
           </a>
         </div>
       </div>

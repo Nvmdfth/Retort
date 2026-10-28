@@ -128,7 +128,7 @@ export default function AdminDashboardPage() {
               disabled={isBusy}
               className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition-all disabled:opacity-50"
             >
-              {isBusy ? 'Authenticating...' : 'Authorize Access &rarr;'}
+              {isBusy ? 'Authenticating...' : 'Authorize Access →'}
             </button>
           </form>
         </div>

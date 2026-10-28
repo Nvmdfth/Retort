@@ -137,7 +137,7 @@ export const WritingView: React.FC = () => {
                   {isSubmitting
                     ? 'Locking in...'
                     : activePromptIndex + 1 < prompts.length
-                    ? 'Submit & Next Prompt &rarr;'
+                    ? 'Submit & Next Prompt →'
                     : 'Lock In Punchline'}
                 </button>
               </form>
