@@ -138,8 +138,12 @@ export class GameEngine {
     rawText: unknown,
     isSafetyQuip = false
   ): { ok: boolean; allDone: boolean; error?: string; room: RoomState } {
-    if (typeof rawText !== 'string' || typeof promptId !== 'string') {
+    if (typeof rawText !== 'string' || typeof promptId !== 'string' || typeof playerId !== 'string') {
       return { ok: false, allDone: false, error: 'Invalid payload format', room };
+    }
+
+    if (playerId === '__proto__' || playerId === 'constructor' || playerId === 'prototype') {
+      return { ok: false, allDone: false, error: 'Illegal player identifier', room };
     }
 
     const text = rawText.trim().slice(0, 45);
@@ -279,6 +283,14 @@ export class GameEngine {
     duelId: string,
     choice: unknown
   ): { ok: boolean; allVoted: boolean; error?: string; room: RoomState } {
+    if (typeof voterId !== 'string' || typeof duelId !== 'string') {
+      return { ok: false, allVoted: false, error: 'Invalid voter format', room };
+    }
+
+    if (voterId === '__proto__' || voterId === 'constructor' || voterId === 'prototype') {
+      return { ok: false, allVoted: false, error: 'Illegal voter identifier', room };
+    }
+
     if (choice !== 'A' && choice !== 'B') {
       return { ok: false, allVoted: false, error: 'Vote choice must be A or B', room };
     }
