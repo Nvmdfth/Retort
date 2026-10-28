@@ -16,6 +16,31 @@ export const DuelVotingView: React.FC = () => {
     );
   }
 
+  // JINX alert
+  if (duel.isJinx) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <motion.div
+          initial={{ scale: 0.5, rotate: -10 }}
+          animate={{ scale: [1, 1.2, 1], rotate: [0, 5, -5, 0] }}
+          transition={{ repeat: Infinity, duration: 1.5 }}
+          className="text-6xl"
+        >
+          🚨
+        </motion.div>
+        <div className="bg-rose-500 text-slate-950 font-black text-xs px-3 py-1 rounded-full uppercase tracking-wider">
+          JINX DETECTED!
+        </div>
+        <h2 className="text-xl font-black text-white">
+          "{duel.promptText}"
+        </h2>
+        <p className="text-xs text-rose-300 max-w-xs leading-relaxed">
+          Both players submitted the exact same punchline! Voting is cancelled and both receive 0 points!
+        </p>
+      </div>
+    );
+  }
+
   // Author lockout: Competing authors cannot vote on their own duel
   if (!duel.canVote) {
     return (

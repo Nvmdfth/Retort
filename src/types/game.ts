@@ -18,12 +18,15 @@ export interface Player {
 export interface Prompt {
   id: string;
   text: string;
+  isFinale?: boolean;     // Round 3 The Last Lash
+  secretTriggers?: Record<string, string>; // answer -> roast
 }
 
 export interface AnswerSubmission {
   promptId: string;
   playerId: string;
   text: string;
+  isSafetyQuip: boolean;
   submittedAt: number;
 }
 
@@ -32,28 +35,40 @@ export interface DuelOption {
   authorId: string;
   text: string;
   authorNickname?: string; // Revealed during DUEL_REVEAL
+  isSafetyQuip?: boolean;  // If true, 50% point penalty
+  secretRoast?: string;    // Schmitty / Host Quip Pro Quo roast
 }
 
 export interface Duel {
   id: string;
   promptId: string;
   promptText: string;
+  round: number;
   optionA: DuelOption;
   optionB: DuelOption;
   eligibleVoterIds: string[]; // All active players minus authorA and authorB
   votes: Record<string, 'A' | 'B'>; // voterId -> choice
+  isJinx: boolean;            // Identical answers submitted
+  isForfeit: boolean;         // One player timed out
+  forfeitWinnerId?: string;
   isComplete: boolean;
 }
 
 export interface DuelResult {
+  isJinx: boolean;
+  isForfeit: boolean;
   votesA: Array<{ id: string; nickname: string }>;
   votesB: Array<{ id: string; nickname: string }>;
   pctA: number;
   pctB: number;
   pointsA: number;
   pointsB: number;
-  isSweepA: boolean;
+  winnerKey?: 'A' | 'B' | 'TIE';
+  winnerBonus?: number;       // +100 (R1) or +200 (R2)
+  isSweepA: boolean;          // +250 (R1) or +500 (R2)
   isSweepB: boolean;
+  penaltyA?: boolean;         // 50% safety quip penalty
+  penaltyB?: boolean;
 }
 
 export interface ScoreDelta {
@@ -68,10 +83,10 @@ export interface RoomState {
   phase: GamePhase;
   phaseTimeRemaining: number;
   phaseDuration: number;
-  round: number;
+  round: number;              // 1 = Normal, 2 = Doubled, 3 = Finale
   players: Record<string, Player>;
   prompts: Prompt[];
-  assignments: Record<string, string[]>; // playerId -> promptIds (2 per player)
+  assignments: Record<string, string[]>; // playerId -> promptIds
   answers: AnswerSubmission[];
   duels: Duel[];
   activeDuelIndex: number;
@@ -86,6 +101,7 @@ export interface ClientGameState {
   phaseTimeRemaining: number;
   phaseDuration: number;
   round: number;
+  roundMultiplier: number;           // 1x in R1, 2x in R2, 3x in R3
   selfPlayerId: string;
   isHost: boolean;
   players: Player[];
@@ -96,8 +112,20 @@ export interface ClientGameState {
     promptText: string;
     duelNumber: number;
     totalDuels: number;
-    optionA: { text: string; authorNickname?: string };
-    optionB: { text: string; authorNickname?: string };
+    isJinx: boolean;
+    isForfeit: boolean;
+    optionA: {
+      text: string;
+      authorNickname?: string;
+      isSafetyQuip?: boolean;
+      secretRoast?: string;
+    };
+    optionB: {
+      text: string;
+      authorNickname?: string;
+      isSafetyQuip?: boolean;
+      secretRoast?: string;
+    };
     canVote: boolean;                // False if player is one of the authors
     myVote?: 'A' | 'B';
     totalVotesCast: number;
@@ -112,12 +140,13 @@ export interface ClientGameState {
   }>;
 }
 
-/** Big-screen host view payload (can see all submissions once active) */
+/** Big-screen host view payload */
 export interface HostGameState {
   roomCode: string;
   phase: GamePhase;
   phaseTimeRemaining: number;
   round: number;
+  roundMultiplier: number;
   players: Player[];
   submittedCount: number;
   totalPlayers: number;
@@ -126,8 +155,20 @@ export interface HostGameState {
     promptText: string;
     duelNumber: number;
     totalDuels: number;
-    optionA: { text: string; authorNickname?: string };
-    optionB: { text: string; authorNickname?: string };
+    isJinx: boolean;
+    isForfeit: boolean;
+    optionA: {
+      text: string;
+      authorNickname?: string;
+      isSafetyQuip?: boolean;
+      secretRoast?: string;
+    };
+    optionB: {
+      text: string;
+      authorNickname?: string;
+      isSafetyQuip?: boolean;
+      secretRoast?: string;
+    };
     totalVotesCast: number;
     totalEligibleVoters: number;
     results?: DuelResult;
@@ -145,7 +186,7 @@ export interface ClientToServerEvents {
   'room:join': (data: { roomCode: string; nickname: string }, callback: (res: { ok: boolean; error?: string }) => void) => void;
   'game:start': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   'game:restart': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
-  'answer:submit': (data: { promptId: string; text: string }, callback?: (res: { ok: boolean }) => void) => void;
+  'answer:submit': (data: { promptId: string; text: string; isSafetyQuip?: boolean }, callback?: (res: { ok: boolean }) => void) => void;
   'vote:cast': (data: { duelId: string; choice: 'A' | 'B' }, callback?: (res: { ok: boolean }) => void) => void;
 }
 

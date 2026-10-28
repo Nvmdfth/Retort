@@ -11,6 +11,8 @@ export const WritingView: React.FC = () => {
     setActivePromptIndex,
     drafts,
     setDraft,
+    fillSafetyQuip,
+    safetyQuipUsed,
     submitAnswer,
     isSubmitting,
   } = useGameStore();
@@ -104,6 +106,23 @@ export const WritingView: React.FC = () => {
                   >
                     {remainingChars}
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => fillSafetyQuip(currentPrompt.id)}
+                    className="text-[11px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
+                  >
+                    <span>🎲</span>
+                    <span>Safety Quip (50% pts)</span>
+                  </button>
+
+                  {safetyQuipUsed[currentPrompt.id] && (
+                    <span className="text-[10px] font-bold text-amber-400">
+                      Auto-Quip Active
+                    </span>
+                  )}
                 </div>
 
                 <button

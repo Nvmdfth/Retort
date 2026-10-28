@@ -15,6 +15,7 @@ interface GameStore {
   isSubmitting: boolean;
   activePromptIndex: number;
   drafts: Record<string, string>;
+  safetyQuipUsed: Record<string, boolean>;
   errorMessage: string | null;
 
   initSocket: () => void;
@@ -24,12 +25,26 @@ interface GameStore {
   restartGame: () => void;
   setActivePromptIndex: (index: number) => void;
   setDraft: (promptId: string, text: string) => void;
-  submitAnswer: (promptId: string, text: string) => void;
+  fillSafetyQuip: (promptId: string) => void;
+  submitAnswer: (promptId: string, text: string, isSafetyQuip?: boolean) => void;
   castVote: (duelId: string, choice: 'A' | 'B') => void;
   clearError: () => void;
 }
 
 let errorTimeout: NodeJS.Timeout | null = null;
+
+const SAFETY_QUIP_POOL = [
+  'A sad fat dragon with no friends',
+  'Gluten-free cannibalism',
+  'Three raccoons in a trench coat',
+  'Stealing copper wire from Wendy\'s',
+  'My emotional support brick',
+  'Crying in the Costco parking lot',
+  'An aggressively polite Canadian goose',
+  'Expired hot dog water soup',
+  'Chugging lukewarm melted butter',
+  'A Roomba that chose violence',
+];
 
 export const useGameStore = create<GameStore>((set, get) => ({
   socket: null,
@@ -38,6 +53,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isSubmitting: false,
   activePromptIndex: 0,
   drafts: {},
+  safetyQuipUsed: {},
   errorMessage: null,
 
   initSocket: () => {
@@ -56,7 +72,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       // Reset prompt index on new round / writing start
       if (prevPhase !== 'WRITING' && newState.phase === 'WRITING') {
-        set({ activePromptIndex: 0, drafts: {} });
+        set({ activePromptIndex: 0, drafts: {}, safetyQuipUsed: {} });
       }
 
       // Reset optimistic vote if duel changes
@@ -153,12 +169,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }));
   },
 
-  submitAnswer: (promptId: string, text: string) => {
+  fillSafetyQuip: (promptId: string) => {
+    const quip = SAFETY_QUIP_POOL[Math.floor(Math.random() * SAFETY_QUIP_POOL.length)];
+    set((state) => ({
+      drafts: { ...state.drafts, [promptId]: quip },
+      safetyQuipUsed: { ...state.safetyQuipUsed, [promptId]: true },
+    }));
+  },
+
+  submitAnswer: (promptId: string, text: string, isSafetyQuip?: boolean) => {
     const clean = text.trim().slice(0, 45);
     if (!clean) return;
 
+    const usedSafety = isSafetyQuip ?? Boolean(get().safetyQuipUsed[promptId]);
+
     set({ isSubmitting: true });
-    get().socket?.emit('answer:submit', { promptId, text: clean }, (res) => {
+    get().socket?.emit('answer:submit', { promptId, text: clean, isSafetyQuip: usedSafety }, (res) => {
       set({ isSubmitting: false });
       if (res && !res.ok) {
         set({ errorMessage: 'Submission rejected by server' });

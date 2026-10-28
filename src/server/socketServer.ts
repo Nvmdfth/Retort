@@ -121,9 +121,10 @@ export class SocketServerManager {
 
     this.broadcastState(roomCode);
 
-    // If 2-player testing mode or 0 eligible voters, auto-transition after 5s preview
+    // If JINX or Forfeit, auto-transition in 3s; if 2-player testing, 5s
     const activeDuel = room.duels[0];
-    const votingDuration = activeDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+    const isSpecial = activeDuel.isJinx || activeDuel.isForfeit;
+    const votingDuration = isSpecial ? 3 : activeDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
 
     this.startPhaseTimer(roomCode, votingDuration, () => {
       this.transitionToReveal(roomCode);
@@ -146,7 +147,8 @@ export class SocketServerManager {
         this.broadcastState(roomCode);
 
         const nextDuel = room.duels[room.activeDuelIndex];
-        const nextDuration = nextDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+        const isNextSpecial = nextDuel.isJinx || nextDuel.isForfeit;
+        const nextDuration = isNextSpecial ? 3 : nextDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
 
         this.startPhaseTimer(roomCode, nextDuration, () => {
           this.transitionToReveal(roomCode);
@@ -367,7 +369,8 @@ export class SocketServerManager {
             room,
             currentPlayerId,
             data?.promptId,
-            data?.text
+            data?.text,
+            Boolean(data?.isSafetyQuip)
           );
           this.rooms.set(currentRoomCode, updatedRoom);
 
