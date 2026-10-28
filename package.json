@@ -7,6 +7,9 @@
     "dev:next": "next dev",
     "build": "next build",
     "start": "NODE_ENV=production bun server.ts",
+    "test": "bun test src/",
+    "test:e2e": "playwright test",
+    "test:all": "bun test src/ && playwright test",
     "lint": "eslint"
   },
   "dependencies": {
@@ -20,6 +23,7 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/turbopack": "^4",
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
