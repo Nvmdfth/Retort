@@ -262,7 +262,7 @@ describe('Retort Socket Server Real-Time Integration', () => {
 
     // 3. Successful admin authentication
     const goodAuth = await new Promise<{ ok: boolean }>((res) => {
-      adminSocket.emit('admin:auth', { secret: 'RetortAdmin' }, res);
+      adminSocket.emit('admin:auth', { secret: process.env.ADMIN_SECRET || 'RetortAdmin' }, res);
     });
     expect(goodAuth.ok).toBe(true);
 

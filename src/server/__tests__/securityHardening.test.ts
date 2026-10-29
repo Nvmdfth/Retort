@@ -121,6 +121,65 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       expect(res.ok).toBe(false);
       expect(res.error).toContain('Invalid join parameters');
     });
+
+    test('CORS blocks socket connection from unauthorized third-party origin', async () => {
+      const evilSock = Client(`http://127.0.0.1:${port}`, {
+        transports: ['websocket'],
+        extraHeaders: {
+          Origin: 'https://evil-phishing-site.com',
+        },
+      });
+      const connectFailed = await new Promise<boolean>((resolve) => {
+        evilSock.on('connect', () => {
+          evilSock.disconnect();
+          resolve(false);
+        });
+        evilSock.on('connect_error', () => {
+          evilSock.disconnect();
+          resolve(true);
+        });
+      });
+      expect(connectFailed).toBe(true);
+    });
+
+    test('IP-based admin brute-force lockout persists across new socket connections', async () => {
+      const url = `http://127.0.0.1:${port}`;
+      const attackerHeaders = { 'cf-connecting-ip': '198.51.100.99' };
+      const sA = Client(url, { transports: ['websocket'], extraHeaders: attackerHeaders });
+      await new Promise<void>((r) => sA.on('connect', r));
+
+      for (let i = 0; i < 5; i++) {
+        await new Promise<{ ok: boolean }>((r) => sA.emit('admin:auth', { secret: `guess-${i}` }, r));
+      }
+      sA.disconnect();
+
+      const sB = Client(url, { transports: ['websocket'], extraHeaders: attackerHeaders });
+      await new Promise<void>((r) => sB.on('connect', r));
+
+      const lockoutRes = await new Promise<{ ok: boolean; error?: string }>((r) => {
+        sB.emit('admin:auth', { secret: 'any-guess' }, r);
+      });
+      expect(lockoutRes.ok).toBe(false);
+      expect(lockoutRes.error).toContain('Too many failed attempts');
+      sB.disconnect();
+    });
+
+    test('Room creation rate-limiting rejects excessive creations from same IP', async () => {
+      const url = `http://127.0.0.1:${port}`;
+      const flooderHeaders = { 'cf-connecting-ip': '203.0.113.42' };
+      const flooder = Client(url, { transports: ['websocket'], extraHeaders: flooderHeaders });
+      await new Promise<void>((r) => flooder.on('connect', r));
+
+      let lastRes: { ok: boolean; error?: string } = { ok: true };
+      for (let i = 0; i < 11; i++) {
+        lastRes = await new Promise<{ ok: boolean; error?: string }>((r) => {
+          flooder.emit('room:create', { nickname: `Spam${i}` }, r);
+        });
+      }
+      expect(lastRes.ok).toBe(false);
+      expect(lastRes.error).toContain('Rate limit exceeded');
+      flooder.disconnect();
+    });
   });
 
   // =========================================================================

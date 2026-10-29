@@ -41,17 +41,81 @@ export class SocketServerManager {
   private rooms: Map<string, RoomState> = new Map();
   private timers: Map<string, ActiveTimer> = new Map();
   private failedAuthAttempts: Map<string, { count: number; lockedUntil: number }> = new Map();
+  private roomCreationPerIp: Map<string, number[]> = new Map();
 
   constructor(httpServer: HttpServer) {
     this.io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
       cors: {
-        origin: '*',
+        origin: (origin, callback) => {
+          // Allow requests with no origin (e.g. mobile apps, curl, test runners, same-origin)
+          if (!origin) return callback(null, true);
+
+          const allowedPatterns = [
+            /^https?:\/\/localhost(:\d+)?$/,
+            /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+            /^https?:\/\/192\.168\.\d+\.\d+(:\d+)?$/,
+            /^https?:\/\/([a-z0-9-]+\.)*wanmedia\.net$/,
+          ];
+
+          if (process.env.ALLOWED_ORIGINS) {
+            const custom = process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim());
+            if (custom.includes(origin)) return callback(null, true);
+          }
+
+          const isAllowed = allowedPatterns.some((pattern) => pattern.test(origin));
+          if (isAllowed) {
+            callback(null, true);
+          } else {
+            console.warn(`[CORS blocked] Origin not allowed: ${origin}`);
+            callback(new Error('CORS origin not allowed'));
+          }
+        },
         methods: ['GET', 'POST'],
       },
       maxHttpBufferSize: 1e5, // 100KB payload limit for DoS mitigation
     });
 
+    // Periodic sweep for abandoned rooms and expired rate-limit buckets
+    const sweepInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [code, r] of this.rooms.entries()) {
+        const connectedCount = Object.values(r.players).filter((p) => p.isConnected).length;
+        if (connectedCount === 0) {
+          this.clearRoomTimer(code);
+          this.rooms.delete(code);
+        } else if (r.phase === 'LOBBY' && now - r.createdAt > 3600000) {
+          this.clearRoomTimer(code);
+          this.rooms.delete(code);
+        }
+      }
+
+      for (const [ip, attempt] of this.failedAuthAttempts.entries()) {
+        if (attempt.lockedUntil < now && attempt.count > 0) {
+          this.failedAuthAttempts.delete(ip);
+        }
+      }
+      for (const [ip, timestamps] of this.roomCreationPerIp.entries()) {
+        const active = timestamps.filter((ts) => now - ts < 600000);
+        if (active.length === 0) {
+          this.roomCreationPerIp.delete(ip);
+        } else {
+          this.roomCreationPerIp.set(ip, active);
+        }
+      }
+    }, 300000);
+    sweepInterval.unref();
+
     this.registerSocketEvents();
+  }
+
+  private getClientIp(socket: Socket): string {
+    const cfIp = socket.handshake.headers['cf-connecting-ip'];
+    if (typeof cfIp === 'string' && cfIp.trim()) return cfIp.trim();
+    const xff = socket.handshake.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.trim()) {
+      return xff.split(',')[0].trim();
+    }
+    return socket.handshake.address || socket.id;
   }
 
   private generateRoomCode(): string {
@@ -299,6 +363,21 @@ export class SocketServerManager {
             return;
           }
 
+          const clientIp = this.getClientIp(socket);
+          const now = Date.now();
+          const recentCreations = (this.roomCreationPerIp.get(clientIp) || []).filter(
+            (ts) => now - ts < 600000
+          );
+
+          const MAX_ROOMS_PER_IP = 10;
+          if (recentCreations.length >= MAX_ROOMS_PER_IP) {
+            callback?.({
+              ok: false,
+              error: 'Rate limit exceeded: Too many rooms created. Please wait a few minutes.',
+            });
+            return;
+          }
+
           const MAX_ACTIVE_ROOMS = 200;
           if (this.rooms.size >= MAX_ACTIVE_ROOMS) {
             callback?.({ ok: false, error: 'Server room capacity reached. Please try again later.' });
@@ -321,6 +400,9 @@ export class SocketServerManager {
 
           const room = GameEngine.createRoom(roomCode, player);
           this.rooms.set(roomCode, room);
+
+          recentCreations.push(now);
+          this.roomCreationPerIp.set(clientIp, recentCreations);
 
           currentRoomCode = roomCode;
           currentPlayerId = socket.id;
@@ -633,25 +715,27 @@ export class SocketServerManager {
       socket.on('admin:auth', (data, callback) => {
         try {
           const now = Date.now();
-          const attempt = this.failedAuthAttempts.get(socket.id);
+          const clientIp = this.getClientIp(socket);
+          const attempt = this.failedAuthAttempts.get(clientIp);
           if (attempt && attempt.lockedUntil > now) {
-            callback?.({ ok: false, error: 'Too many failed attempts. Temporarily locked out.' });
+            const remainingSec = Math.ceil((attempt.lockedUntil - now) / 1000);
+            callback?.({ ok: false, error: `Too many failed attempts. Locked out for ${remainingSec}s.` });
             return;
           }
 
           const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
           const validSecret = (process.env.ADMIN_SECRET || 'RetortAdmin').trim().replace(/^["']|["']$/g, '');
           const ok = isSecretValid(secret, validSecret);
-          console.log(`[admin:auth] socket=${socket.id} attempt=${ok ? 'SUCCESS' : 'FAILED'}`);
+          console.log(`[admin:auth] ip=${clientIp} socket=${socket.id} attempt=${ok ? 'SUCCESS' : 'FAILED'}`);
           if (ok) {
-            this.failedAuthAttempts.delete(socket.id);
+            this.failedAuthAttempts.delete(clientIp);
             socket.join('admin:dashboard');
             callback?.({ ok: true });
             socket.emit('admin:sync:rooms', this.getAllAdminSummaries());
           } else {
             const count = (attempt?.count || 0) + 1;
-            const lockedUntil = count >= 5 ? now + 30000 : 0;
-            this.failedAuthAttempts.set(socket.id, { count, lockedUntil });
+            const lockedUntil = count >= 5 ? now + 60000 : 0;
+            this.failedAuthAttempts.set(clientIp, { count, lockedUntil });
             callback?.({ ok: false, error: 'Invalid admin credentials' });
           }
         } catch (err) {
