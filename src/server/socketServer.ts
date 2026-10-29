@@ -550,8 +550,8 @@ export class SocketServerManager {
           }
 
           const activeCount = Object.values(room.players).filter((p) => p.isConnected).length;
-          if (activeCount < 3) {
-            callback?.({ ok: false, error: 'Need at least 3 players to start' });
+          if (activeCount < 2) {
+            callback?.({ ok: false, error: 'Need at least 2 players to start' });
             return;
           }
 
