@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
+import rawSafetyQuips from '@/server/safetyQuips.json';
 import type {
   ClientGameState,
   ClientToServerEvents,
@@ -33,18 +34,7 @@ interface GameStore {
 
 let errorTimeout: NodeJS.Timeout | null = null;
 
-const SAFETY_QUIP_POOL = [
-  'A sad fat dragon with no friends',
-  'Gluten-free cannibalism',
-  'Three raccoons in a trench coat',
-  'Stealing copper wire from Wendy\'s',
-  'My emotional support brick',
-  'Crying in the Costco parking lot',
-  'An aggressively polite Canadian goose',
-  'Expired hot dog water soup',
-  'Chugging lukewarm melted butter',
-  'A Roomba that chose violence',
-];
+const SAFETY_QUIP_POOL = rawSafetyQuips as string[];
 
 export const useGameStore = create<GameStore>((set, get) => ({
   socket: null,
@@ -103,7 +93,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ errorMessage: message, gameState: null });
       if (typeof window !== 'undefined') {
         setTimeout(() => {
-          window.location.href = '/';
+          window.location.replace('/');
         }, 1500);
       }
     });
@@ -121,6 +111,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       socket.emit('room:create', { nickname }, (res) => {
         if (res.ok && res.roomCode) {
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem('retort_room_code', res.roomCode);
+            sessionStorage.setItem('retort_nickname', nickname);
+            if (res.playerId) sessionStorage.setItem('retort_player_id', res.playerId);
+            if (res.sessionToken) sessionStorage.setItem('retort_session_token', res.sessionToken);
+          }
           resolve(res.roomCode);
         } else {
           set({ errorMessage: res.error || 'Failed to create room' });
@@ -138,8 +134,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return;
       }
 
-      socket.emit('room:join', { roomCode, nickname }, (res) => {
+      const storedPlayerId = typeof window !== 'undefined' ? sessionStorage.getItem('retort_player_id') || undefined : undefined;
+      const storedSessionToken = typeof window !== 'undefined' ? sessionStorage.getItem('retort_session_token') || undefined : undefined;
+
+      socket.emit('room:join', { roomCode, nickname, playerId: storedPlayerId, sessionToken: storedSessionToken }, (res) => {
         if (res.ok) {
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem('retort_room_code', roomCode);
+            sessionStorage.setItem('retort_nickname', nickname);
+            if (res.playerId) sessionStorage.setItem('retort_player_id', res.playerId);
+            if (res.sessionToken) sessionStorage.setItem('retort_session_token', res.sessionToken);
+          }
           resolve();
         } else {
           set({ errorMessage: res.error || 'Failed to join room' });

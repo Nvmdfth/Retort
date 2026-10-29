@@ -92,7 +92,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
 
       for (const payload of malformedPayloads) {
         const res = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-          sock1.emit('room:create', payload as any, resolve);
+          sock1.emit('room:create', payload as unknown as { nickname: string }, resolve);
         });
         expect(res.ok).toBe(false);
         expect(res.error).toBeDefined();
@@ -116,7 +116,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
 
     test('Server rejects joining with malformed roomCode over socket', async () => {
       const res = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        sock1.emit('room:join', { roomCode: 12345 as any, nickname: 'Hacker' }, resolve);
+        sock1.emit('room:join', { roomCode: 12345 as unknown as string, nickname: 'Hacker' }, resolve);
       });
       expect(res.ok).toBe(false);
       expect(res.error).toContain('Invalid join parameters');
@@ -215,7 +215,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       // In WRITING: p1 must NOT see other players' answers or unassigned prompts
       const p1Writing = GameEngine.getClientState(room, 'p1');
       expect(p1Writing.activePrompts?.length).toBe(2);
-      expect((p1Writing as any).answers).toBeUndefined();
+      expect((p1Writing as unknown as Record<string, unknown>).answers).toBeUndefined();
 
       // In DUEL_VOTING: Author nicknames must be completely redacted
       Object.entries(room.assignments).forEach(([pId, promptIds]) => {
@@ -245,7 +245,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       const res1 = GameEngine.recordAnswer(room, '__proto__', promptId, 'Polluted');
       expect(res1.ok).toBe(false);
       expect(res1.error).toContain('Illegal player identifier');
-      expect((Object.prototype as any).polluted).toBeUndefined();
+      expect((Object.prototype as unknown as Record<string, unknown>).polluted).toBeUndefined();
 
       // Attempt prototype pollution via voterId
       room.duels = [{
@@ -266,7 +266,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
       const res2 = GameEngine.castVote(room, '__proto__', 'duel-1', 'A');
       expect(res2.ok).toBe(false);
       expect(res2.error).toContain('Illegal voter identifier');
-      expect((Object.prototype as any)['duel-1']).toBeUndefined();
+      expect((Object.prototype as unknown as Record<string, unknown>)['duel-1']).toBeUndefined();
     });
   });
 

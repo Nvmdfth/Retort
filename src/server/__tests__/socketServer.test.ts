@@ -6,6 +6,7 @@ import type {
   ClientGameState,
   ClientToServerEvents,
   ServerToClientEvents,
+  AdminRoomSummary,
 } from '../../types/game';
 
 type TypedClientSocket = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
@@ -230,15 +231,21 @@ describe('Retort Socket Server Real-Time Integration', () => {
     });
     const roomCode = createRes.roomCode!;
 
-    // 2. Reject bad admin authentication
+    // 2. Reject bad admin authentication & ensure legacy backdoor is eliminated
     const badAuth = await new Promise<{ ok: boolean; error?: string }>((res) => {
       adminSocket.emit('admin:auth', { secret: 'wrong-secret' }, res);
     });
     expect(badAuth.ok).toBe(false);
     expect(badAuth.error).toBeDefined();
 
+    const backdoorAuth = await new Promise<{ ok: boolean; error?: string }>((res) => {
+      adminSocket.emit('admin:auth', { secret: 'retort-admin-2026' }, res);
+    });
+    expect(backdoorAuth.ok).toBe(false);
+    expect(backdoorAuth.error).toContain('Invalid admin credentials');
+
     // 2b. Unauthenticated socket cannot execute admin commands (Security Guardrail)
-    const unauthorizedList = await new Promise<any[]>((res) => {
+    const unauthorizedList = await new Promise<AdminRoomSummary[]>((res) => {
       adminSocket.emit('admin:rooms:list', res);
     });
     expect(unauthorizedList).toEqual([]);
@@ -260,13 +267,13 @@ describe('Retort Socket Server Real-Time Integration', () => {
     expect(goodAuth.ok).toBe(true);
 
     // 4. Admin lists rooms silently
-    const roomsList = await new Promise<any[]>((res) => {
+    const roomsList = await new Promise<AdminRoomSummary[]>((res) => {
       adminSocket.emit('admin:rooms:list', res);
     });
     const monitoredRoom = roomsList.find((r) => r.roomCode === roomCode);
     expect(monitoredRoom).toBeDefined();
-    expect(monitoredRoom.playerCount).toBe(1);
-    expect(monitoredRoom.activePlayers[0].nickname).toBe('Player1');
+    expect(monitoredRoom?.playerCount).toBe(1);
+    expect(monitoredRoom?.activePlayers[0].nickname).toBe('Player1');
 
     // 5. Player socket NEVER sees admin in room players (Silent Observer Guarantee)
     const clientState = await new Promise<ClientGameState>((res) => {
@@ -297,12 +304,118 @@ describe('Retort Socket Server Real-Time Integration', () => {
     expect(termEvent.message).toContain('closed by an administrator');
 
     // 8. Room is deleted from active rooms list
-    const updatedRooms = await new Promise<any[]>((res) => {
+    const updatedRooms = await new Promise<AdminRoomSummary[]>((res) => {
       adminSocket.emit('admin:rooms:list', res);
     });
     expect(updatedRooms.some((r) => r.roomCode === roomCode)).toBe(false);
 
     adminSocket.disconnect();
     playerSocket.disconnect();
+  });
+
+  test('TV Host Projector receives live timer ticks on host:subscribe', async () => {
+    const url = `http://127.0.0.1:${port}`;
+    const hostUser = Client(url, { transports: ['websocket'] });
+    const tvScreen = Client(url, { transports: ['websocket'] });
+    const p2 = Client(url, { transports: ['websocket'] });
+    const p3 = Client(url, { transports: ['websocket'] });
+
+    await Promise.all([
+      new Promise<void>((r) => hostUser.on('connect', r)),
+      new Promise<void>((r) => tvScreen.on('connect', r)),
+      new Promise<void>((r) => p2.on('connect', r)),
+      new Promise<void>((r) => p3.on('connect', r)),
+    ]);
+
+    const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((r) => {
+      hostUser.emit('room:create', { nickname: 'Host' }, r);
+    });
+    const roomCode = createRes.roomCode!;
+
+    await Promise.all([
+      new Promise<void>((r) => p2.emit('room:join', { roomCode, nickname: 'Bob' }, () => r())),
+      new Promise<void>((r) => p3.emit('room:join', { roomCode, nickname: 'Charlie' }, () => r())),
+    ]);
+
+    // TV subscribes to host display feed
+    tvScreen.emit('host:subscribe', { roomCode });
+
+    const tickPromise = new Promise<{ remaining: number }>((resolve) => {
+      tvScreen.on('timer:tick', (data) => resolve(data));
+    });
+
+    // Start game to trigger phase timer
+    await new Promise<void>((r) => hostUser.emit('game:start', () => r()));
+
+    const tick = await tickPromise;
+    expect(tick.remaining).toBeGreaterThanOrEqual(0);
+
+    hostUser.disconnect();
+    tvScreen.disconnect();
+    p2.disconnect();
+    p3.disconnect();
+  });
+
+  test('Player Reconnection: Disconnected player rebinds to active game state', async () => {
+    const url = `http://127.0.0.1:${port}`;
+    const hostUser = Client(url, { transports: ['websocket'] });
+    let player2 = Client(url, { transports: ['websocket'] });
+    const player3 = Client(url, { transports: ['websocket'] });
+
+    await Promise.all([
+      new Promise<void>((r) => hostUser.on('connect', r)),
+      new Promise<void>((r) => player2.on('connect', r)),
+      new Promise<void>((r) => player3.on('connect', r)),
+    ]);
+
+    const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((r) => {
+      hostUser.emit('room:create', { nickname: 'Host' }, r);
+    });
+    const roomCode = createRes.roomCode!;
+
+    const p2Join = await new Promise<{ ok: boolean; playerId?: string; sessionToken?: string }>((r) => {
+      player2.emit('room:join', { roomCode, nickname: 'Bob' }, r);
+    });
+    const savedSessionToken = p2Join.sessionToken;
+
+    await new Promise<void>((r) => {
+      player3.emit('room:join', { roomCode, nickname: 'Charlie' }, () => r());
+    });
+
+    // Start game into WRITING
+    await new Promise<void>((r) => hostUser.emit('game:start', () => r()));
+
+    // Simulate mobile screen sleep / disconnection of player2
+    player2.disconnect();
+
+    // 1. Rogue socket attempting to hijack Bob's seat by nickname without sessionToken is rejected
+    const rogue = Client(url, { transports: ['websocket'] });
+    await new Promise<void>((r) => rogue.on('connect', r));
+    const rogueRes = await new Promise<{ ok: boolean; error?: string }>((r) => {
+      rogue.emit('room:join', { roomCode, nickname: 'Bob' }, r);
+    });
+    expect(rogueRes.ok).toBe(false);
+    expect(rogueRes.error).toContain('Game already in progress');
+    rogue.disconnect();
+
+    // 2. Legitimate player reconnects with private sessionToken
+    player2 = Client(url, { transports: ['websocket'] });
+    await new Promise<void>((r) => player2.on('connect', r));
+
+    const reconnectRes = await new Promise<{ ok: boolean; playerId?: string }>((r) => {
+      player2.emit('room:join', { roomCode, nickname: 'Bob', sessionToken: savedSessionToken }, r);
+    });
+    expect(reconnectRes.ok).toBe(true);
+
+    // Verify reconnected player receives active WRITING state with assigned prompts
+    const syncState = await new Promise<ClientGameState>((resolve) => {
+      player2.on('sync:state', (s) => resolve(s));
+    });
+    expect(syncState.phase).toBe('WRITING');
+    expect(syncState.activePrompts?.length).toBeGreaterThan(0);
+
+    hostUser.disconnect();
+    player2.disconnect();
+    player3.disconnect();
   });
 });

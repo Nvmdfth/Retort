@@ -8,6 +8,7 @@ export type GamePhase =
 
 export interface Player {
   id: string;             // Socket ID or persistent session UUID
+  sessionToken?: string;  // Private reconnect authentication token (scrubbed from public projections)
   nickname: string;
   avatarSeed: string;
   score: number;
@@ -221,8 +222,9 @@ export interface AdminRoomSummary {
 }
 
 export interface ClientToServerEvents {
-  'room:create': (data: { nickname: string }, callback: (res: { ok: boolean; roomCode?: string; error?: string }) => void) => void;
-  'room:join': (data: { roomCode: string; nickname: string }, callback: (res: { ok: boolean; error?: string }) => void) => void;
+  'host:subscribe': (data: { roomCode: string }) => void;
+  'room:create': (data: { nickname: string; sessionToken?: string }, callback: (res: { ok: boolean; roomCode?: string; error?: string; sessionToken?: string; playerId?: string }) => void) => void;
+  'room:join': (data: { roomCode: string; nickname: string; sessionToken?: string; playerId?: string }, callback: (res: { ok: boolean; error?: string; sessionToken?: string; playerId?: string }) => void) => void;
   'game:start': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   'game:restart': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   'answer:submit': (data: { promptId: string; text: string; isSafetyQuip?: boolean }, callback?: (res: { ok: boolean }) => void) => void;

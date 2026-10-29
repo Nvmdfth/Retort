@@ -1,6 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual, createHash, randomInt, randomBytes } from 'crypto';
+import rawSafetyQuips from './safetyQuips.json';
 import {
   GameEngine,
   WRITING_DURATION,
@@ -20,21 +21,12 @@ function isSecretValid(input: string, expected: string): boolean {
   const normInput = input.trim();
   const normExpected = expected.trim().replace(/^["']|["']$/g, '');
 
-  if (!normInput) return false;
+  if (!normInput || !normExpected) return false;
 
-  // Exact match
-  if (normInput === normExpected) return true;
+  const hashInput = createHash('sha256').update(normInput).digest();
+  const hashExpected = createHash('sha256').update(normExpected).digest();
 
-  // Case-insensitive match (e.g. retortadmin vs RetortAdmin)
-  if (normInput.toLowerCase() === normExpected.toLowerCase()) return true;
-
-  // Backwards compatibility with previous admin key
-  if (normInput === 'retort-admin-2026') return true;
-
-  const a = Buffer.from(normInput);
-  const b = Buffer.from(normExpected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return timingSafeEqual(hashInput, hashExpected);
 }
 
 type CustomSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -48,6 +40,7 @@ export class SocketServerManager {
   private io: Server<ClientToServerEvents, ServerToClientEvents>;
   private rooms: Map<string, RoomState> = new Map();
   private timers: Map<string, ActiveTimer> = new Map();
+  private failedAuthAttempts: Map<string, { count: number; lockedUntil: number }> = new Map();
 
   constructor(httpServer: HttpServer) {
     this.io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
@@ -67,7 +60,7 @@ export class SocketServerManager {
     do {
       code = '';
       for (let i = 0; i < 4; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+        code += chars.charAt(randomInt(0, chars.length));
       }
     } while (this.rooms.has(code));
     return code;
@@ -119,8 +112,11 @@ export class SocketServerManager {
           room.phase = 'ROUND_INTERMISSION';
           this.broadcastState(roomCode);
           this.startPhaseTimer(roomCode, INTERMISSION_DURATION, () => {
-            room.round += 1;
-            GameEngine.startWritingPhase(room);
+            const currentRoom = this.rooms.get(roomCode);
+            if (!currentRoom) return;
+            currentRoom.round += 1;
+            const updatedRoom = GameEngine.startWritingPhase(currentRoom);
+            this.rooms.set(roomCode, updatedRoom);
             this.broadcastState(roomCode);
             this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
               this.transitionToVoting(roomCode);
@@ -134,7 +130,8 @@ export class SocketServerManager {
       }
     } else if (room.phase === 'ROUND_INTERMISSION') {
       room.round += 1;
-      GameEngine.startWritingPhase(room);
+      const updatedRoom = GameEngine.startWritingPhase(room);
+      this.rooms.set(roomCode, updatedRoom);
       this.broadcastState(roomCode);
       this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
         this.transitionToVoting(roomCode);
@@ -181,7 +178,7 @@ export class SocketServerManager {
       }
 
       currentRoom.phaseTimeRemaining = Math.max(0, currentRoom.phaseTimeRemaining - 1);
-      this.io.to(`room:${roomCode}`).emit('timer:tick', {
+      this.io.to(`room:${roomCode}`).to(`host:${roomCode}`).emit('timer:tick', {
         remaining: currentRoom.phaseTimeRemaining,
       });
 
@@ -251,8 +248,11 @@ export class SocketServerManager {
           this.broadcastState(roomCode);
 
           this.startPhaseTimer(roomCode, INTERMISSION_DURATION, () => {
-            room.round += 1;
-            GameEngine.startWritingPhase(room);
+            const currentRoom = this.rooms.get(roomCode);
+            if (!currentRoom) return;
+            currentRoom.round += 1;
+            const updatedRoom = GameEngine.startWritingPhase(currentRoom);
+            this.rooms.set(roomCode, updatedRoom);
             this.broadcastState(roomCode);
 
             this.startPhaseTimer(roomCode, WRITING_DURATION, () => {
@@ -276,7 +276,7 @@ export class SocketServerManager {
       let currentPlayerId: string | null = null;
 
       // Host view registration
-      socket.on('host:subscribe' as any, (data: any) => {
+      socket.on('host:subscribe', (data: { roomCode: string }) => {
         try {
           const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
           if (roomCode) {
@@ -299,10 +299,18 @@ export class SocketServerManager {
             return;
           }
 
+          const MAX_ACTIVE_ROOMS = 200;
+          if (this.rooms.size >= MAX_ACTIVE_ROOMS) {
+            callback?.({ ok: false, error: 'Server room capacity reached. Please try again later.' });
+            return;
+          }
+
           const cleanNick = data.nickname.trim().slice(0, 16) || 'Host';
           const roomCode = this.generateRoomCode();
+          const sessionToken = randomBytes(16).toString('hex');
           const player: Player = {
             id: socket.id,
+            sessionToken,
             nickname: cleanNick,
             avatarSeed: socket.id.slice(0, 4),
             score: 0,
@@ -320,7 +328,7 @@ export class SocketServerManager {
           socket.join(`room:${roomCode}`);
           socket.join(socket.id);
 
-          callback?.({ ok: true, roomCode });
+          callback?.({ ok: true, roomCode, playerId: socket.id, sessionToken });
           this.broadcastState(roomCode);
         } catch (err) {
           console.error('[room:create error]', err);
@@ -328,7 +336,7 @@ export class SocketServerManager {
         }
       });
 
-      // Join existing room
+      // Join existing room with seamless reconnection support
       socket.on('room:join', (data, callback) => {
         try {
           if (!data || typeof data.roomCode !== 'string' || typeof data.nickname !== 'string') {
@@ -345,13 +353,73 @@ export class SocketServerManager {
             return;
           }
 
+          // Secure reconnect: Match private sessionToken
+          const reqToken = typeof data.sessionToken === 'string' ? data.sessionToken.trim() : null;
+          const reconnectingPlayer = reqToken
+            ? Object.values(room.players).find((p) => p.sessionToken === reqToken)
+            : null;
+
+          if (reconnectingPlayer) {
+            const oldId = reconnectingPlayer.id;
+            delete room.players[oldId];
+            reconnectingPlayer.id = socket.id;
+            reconnectingPlayer.isConnected = true;
+            room.players[socket.id] = reconnectingPlayer;
+
+            // Re-assign prompt assignments
+            if (room.assignments[oldId]) {
+              const assigned = room.assignments[oldId];
+              delete room.assignments[oldId];
+              room.assignments[socket.id] = assigned;
+            }
+
+            // Re-assign submitted answers
+            room.answers.forEach((ans) => {
+              if (ans.playerId === oldId) ans.playerId = socket.id;
+            });
+
+            // Re-assign duel authorships, eligible voters, forfeit winners, and votes
+            room.duels.forEach((duel) => {
+              if (duel.optionA.authorId === oldId) duel.optionA.authorId = socket.id;
+              if (duel.optionB.authorId === oldId) duel.optionB.authorId = socket.id;
+              if (duel.forfeitWinnerId === oldId) duel.forfeitWinnerId = socket.id;
+              duel.eligibleVoterIds = duel.eligibleVoterIds.map((id) => (id === oldId ? socket.id : id));
+              if (duel.votes[oldId]) {
+                const choice = duel.votes[oldId];
+                delete duel.votes[oldId];
+                duel.votes[socket.id] = choice;
+              }
+            });
+
+            if (room.activeDuelResult) {
+              room.activeDuelResult.votesA.forEach((v) => { if (v.id === oldId) v.id = socket.id; });
+              room.activeDuelResult.votesB.forEach((v) => { if (v.id === oldId) v.id = socket.id; });
+            }
+
+            room.recentScoreDeltas.forEach((d) => {
+              if (d.playerId === oldId) d.playerId = socket.id;
+            });
+
+            currentRoomCode = code;
+            currentPlayerId = socket.id;
+
+            socket.join(`room:${code}`);
+            socket.join(socket.id);
+
+            callback?.({ ok: true, playerId: socket.id, sessionToken: reconnectingPlayer.sessionToken });
+            this.broadcastState(code);
+            return;
+          }
+
           if (room.phase !== 'LOBBY') {
             callback?.({ ok: false, error: 'Game already in progress' });
             return;
           }
 
+          const sessionToken = randomBytes(16).toString('hex');
           const player: Player = {
             id: socket.id,
+            sessionToken,
             nickname: cleanNick,
             avatarSeed: socket.id.slice(0, 4),
             score: 0,
@@ -367,7 +435,7 @@ export class SocketServerManager {
           socket.join(`room:${code}`);
           socket.join(socket.id);
 
-          callback?.({ ok: true });
+          callback?.({ ok: true, playerId: socket.id, sessionToken });
           this.broadcastState(code);
         } catch (err) {
           console.error('[room:join error]', err);
@@ -400,8 +468,8 @@ export class SocketServerManager {
           }
 
           const activeCount = Object.values(room.players).filter((p) => p.isConnected).length;
-          if (activeCount < 2) {
-            callback?.({ ok: false, error: 'Need at least 2 players to start' });
+          if (activeCount < 3) {
+            callback?.({ ok: false, error: 'Need at least 3 players to start' });
             return;
           }
 
@@ -497,12 +565,18 @@ export class SocketServerManager {
             return;
           }
 
+          const rawAnswer = typeof data?.text === 'string' ? data.text.trim().toLowerCase() : '';
+          const isSafetyQuipMatched = (rawSafetyQuips as string[]).some(
+            (sq) => sq.trim().toLowerCase() === rawAnswer
+          );
+          const isSafetyQuip = Boolean(data?.isSafetyQuip) || isSafetyQuipMatched;
+
           const { ok, allDone, room: updatedRoom } = GameEngine.recordAnswer(
             room,
             currentPlayerId,
             data?.promptId,
             data?.text,
-            Boolean(data?.isSafetyQuip)
+            isSafetyQuip
           );
           this.rooms.set(currentRoomCode, updatedRoom);
 
@@ -558,15 +632,26 @@ export class SocketServerManager {
       // Admin authentication
       socket.on('admin:auth', (data, callback) => {
         try {
+          const now = Date.now();
+          const attempt = this.failedAuthAttempts.get(socket.id);
+          if (attempt && attempt.lockedUntil > now) {
+            callback?.({ ok: false, error: 'Too many failed attempts. Temporarily locked out.' });
+            return;
+          }
+
           const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
           const validSecret = (process.env.ADMIN_SECRET || 'RetortAdmin').trim().replace(/^["']|["']$/g, '');
           const ok = isSecretValid(secret, validSecret);
           console.log(`[admin:auth] socket=${socket.id} attempt=${ok ? 'SUCCESS' : 'FAILED'}`);
           if (ok) {
+            this.failedAuthAttempts.delete(socket.id);
             socket.join('admin:dashboard');
             callback?.({ ok: true });
             socket.emit('admin:sync:rooms', this.getAllAdminSummaries());
           } else {
+            const count = (attempt?.count || 0) + 1;
+            const lockedUntil = count >= 5 ? now + 30000 : 0;
+            this.failedAuthAttempts.set(socket.id, { count, lockedUntil });
             callback?.({ ok: false, error: 'Invalid admin credentials' });
           }
         } catch (err) {
@@ -583,7 +668,7 @@ export class SocketServerManager {
             return;
           }
           callback?.(this.getAllAdminSummaries());
-        } catch (err) {
+        } catch {
           callback?.([]);
         }
       });

@@ -10,19 +10,15 @@ function LobbyForm() {
   const searchParams = useSearchParams();
   const { initSocket, createRoom, joinRoom, errorMessage, clearError } = useGameStore();
 
+  const initialCode = (searchParams.get('code') || '').toUpperCase();
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [nickname, setNickname] = useState('');
-  const [roomCode, setRoomCode] = useState('');
+  const [roomCode, setRoomCode] = useState(initialCode);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     initSocket();
-    const queryCode = searchParams.get('code');
-    if (queryCode) {
-      setRoomCode(queryCode.toUpperCase());
-      setMode('join');
-    }
-  }, [initSocket, searchParams]);
+  }, [initSocket]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

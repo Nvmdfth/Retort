@@ -8,7 +8,6 @@ import type {
   DuelResult,
   ClientGameState,
   HostGameState,
-  ScoreDelta,
   AdminRoomSummary,
 } from '../types/game';
 
@@ -118,19 +117,18 @@ export class GameEngine {
       }
     }
 
-    return {
-      ...room,
-      phase: 'WRITING',
-      phaseDuration: WRITING_DURATION,
-      phaseTimeRemaining: WRITING_DURATION,
-      prompts: selectedPrompts,
-      assignments,
-      answers: [],
-      duels: [],
-      activeDuelIndex: 0,
-      activeDuelResult: undefined,
-      recentScoreDeltas: [],
-    };
+    room.phase = 'WRITING';
+    room.phaseDuration = WRITING_DURATION;
+    room.phaseTimeRemaining = WRITING_DURATION;
+    room.prompts = selectedPrompts;
+    room.assignments = assignments;
+    room.answers = [];
+    room.duels = [];
+    room.activeDuelIndex = 0;
+    room.activeDuelResult = undefined;
+    room.recentScoreDeltas = [];
+
+    return room;
   }
 
   /**
@@ -163,6 +161,9 @@ export class GameEngine {
       return { ok: false, allDone: false, error: 'Prompt is not assigned to you', room };
     }
 
+    // Quiplash specification: Safety Quips are strictly disabled in Round 3 Finale
+    const finalSafetyQuip = room.round >= 3 ? false : Boolean(isSafetyQuip);
+
     // Remove prior answer for same prompt if player edits/re-submits
     const filteredAnswers = room.answers.filter(
       (a) => !(a.playerId === playerId && a.promptId === promptId)
@@ -171,7 +172,7 @@ export class GameEngine {
       promptId,
       playerId,
       text,
-      isSafetyQuip,
+      isSafetyQuip: finalSafetyQuip,
       submittedAt: Date.now(),
     });
 
@@ -224,9 +225,11 @@ export class GameEngine {
         const authorA = room.players[pAId];
         const authorB = room.players[pBId];
 
-        // Forfeit check: exactly one answered
-        const isForfeit = (hasAnsA && !hasAnsB) || (!hasAnsA && hasAnsB);
-        const forfeitWinnerId = isForfeit ? (hasAnsA ? pAId : pBId) : undefined;
+        // Forfeit check: exactly one answered or mutual timeout
+        const isSingleForfeit = (hasAnsA && !hasAnsB) || (!hasAnsA && hasAnsB);
+        const isMutualTimeout = !hasAnsA && !hasAnsB;
+        const isForfeit = isSingleForfeit || isMutualTimeout;
+        const forfeitWinnerId = isSingleForfeit ? (hasAnsA ? pAId : pBId) : undefined;
 
         const textA = ansA?.text || '[Timed Out!]';
         const textB = ansB?.text || '[Timed Out!]';
@@ -340,6 +343,15 @@ export class GameEngine {
    */
   public static calculateDuelResult(room: RoomState): DuelResult {
     const duel = room.duels[room.activeDuelIndex];
+    if (!duel) {
+      throw new Error('Active duel not found');
+    }
+
+    // Idempotency guard: Prevent duplicate score additions if duel was already calculated
+    if (duel.isComplete && room.activeDuelResult) {
+      return room.activeDuelResult;
+    }
+
     const multiplier = Math.min(room.round, 3); // 1, 2, or 3
     const basePool = 1000 * multiplier;
     const standardWinnerBonus = 100 * multiplier;
@@ -361,6 +373,10 @@ export class GameEngine {
         isSweepA: false,
         isSweepB: false,
       };
+      room.recentScoreDeltas = [
+        { playerId: duel.optionA.authorId, pointsAdded: 0, reason: 'JINX' },
+        { playerId: duel.optionB.authorId, pointsAdded: 0, reason: 'JINX' },
+      ];
       room.activeDuelResult = result;
       return result;
     }
@@ -368,13 +384,14 @@ export class GameEngine {
     // Case 2: Forfeit / Timeout
     if (duel.isForfeit) {
       duel.isComplete = true;
+      const isMutualTimeout = !duel.forfeitWinnerId;
       const winnerIsA = duel.forfeitWinnerId === duel.optionA.authorId;
-      let pointsA = winnerIsA ? basePool : 0;
-      let pointsB = !winnerIsA ? basePool : 0;
+      let pointsA = isMutualTimeout ? 0 : (winnerIsA ? basePool : 0);
+      let pointsB = isMutualTimeout ? 0 : (!winnerIsA ? basePool : 0);
 
       // Apply Safety Quip penalty if used
       if (winnerIsA && duel.optionA.isSafetyQuip) pointsA = Math.round(pointsA * 0.5);
-      if (!winnerIsA && duel.optionB.isSafetyQuip) pointsB = Math.round(pointsB * 0.5);
+      if (!winnerIsA && !isMutualTimeout && duel.optionB.isSafetyQuip) pointsB = Math.round(pointsB * 0.5);
 
       if (room.players[duel.optionA.authorId]) {
         room.players[duel.optionA.authorId].score += pointsA;
@@ -388,16 +405,20 @@ export class GameEngine {
         isForfeit: true,
         votesA: [],
         votesB: [],
-        pctA: winnerIsA ? 100 : 0,
-        pctB: winnerIsA ? 0 : 100,
+        pctA: isMutualTimeout ? 0 : (winnerIsA ? 100 : 0),
+        pctB: isMutualTimeout ? 0 : (winnerIsA ? 0 : 100),
         pointsA,
         pointsB,
-        winnerKey: winnerIsA ? 'A' : 'B',
+        winnerKey: isMutualTimeout ? 'TIE' : (winnerIsA ? 'A' : 'B'),
         isSweepA: false,
         isSweepB: false,
         penaltyA: winnerIsA && !!duel.optionA.isSafetyQuip,
-        penaltyB: !winnerIsA && !!duel.optionB.isSafetyQuip,
+        penaltyB: !winnerIsA && !isMutualTimeout && !!duel.optionB.isSafetyQuip,
       };
+      room.recentScoreDeltas = [
+        { playerId: duel.optionA.authorId, pointsAdded: pointsA, reason: isMutualTimeout ? 'Mutual Timeout' : 'Forfeit Win' },
+        { playerId: duel.optionB.authorId, pointsAdded: pointsB, reason: isMutualTimeout ? 'Mutual Timeout' : 'Forfeit Loss' },
+      ];
       room.activeDuelResult = result;
       return result;
     }
@@ -437,6 +458,7 @@ export class GameEngine {
       winnerKey = 'A';
       if (isSweepA) {
         pointsA += sweepBonus; // Replaces standard winner bonus
+        winnerBonus = sweepBonus;
       } else {
         pointsA += standardWinnerBonus;
         winnerBonus = standardWinnerBonus;
@@ -445,6 +467,7 @@ export class GameEngine {
       winnerKey = 'B';
       if (isSweepB) {
         pointsB += sweepBonus; // Replaces standard winner bonus
+        winnerBonus = sweepBonus;
       } else {
         pointsB += standardWinnerBonus;
         winnerBonus = standardWinnerBonus;
@@ -486,6 +509,10 @@ export class GameEngine {
     };
 
     duel.isComplete = true;
+    room.recentScoreDeltas = [
+      { playerId: duel.optionA.authorId, pointsAdded: pointsA, reason: isSweepA ? 'Clean Sweep' : 'Duel Win' },
+      { playerId: duel.optionB.authorId, pointsAdded: pointsB, reason: isSweepB ? 'Clean Sweep' : 'Duel' },
+    ];
     room.activeDuelResult = result;
     return result;
   }
@@ -495,7 +522,11 @@ export class GameEngine {
    */
   public static getClientState(room: RoomState, playerId: string): ClientGameState {
     const isHost = room.players[playerId]?.isHost ?? false;
-    const playerList = Object.values(room.players).map((p) => ({ ...p }));
+    const playerList = Object.values(room.players).map((p) => {
+      const safePlayer = { ...p };
+      delete safePlayer.sessionToken;
+      return safePlayer;
+    });
     const roundMultiplier = Math.min(room.round, 3);
 
     const clientState: ClientGameState = {
@@ -571,7 +602,11 @@ export class GameEngine {
    * Produce host/projector state view.
    */
   public static getHostState(room: RoomState): HostGameState {
-    const playerList = Object.values(room.players);
+    const playerList = Object.values(room.players).map((p) => {
+      const safePlayer = { ...p };
+      delete safePlayer.sessionToken;
+      return safePlayer;
+    });
     const submittedCount = playerList.filter((p) => p.hasSubmitted).length;
     const roundMultiplier = Math.min(room.round, 3);
 

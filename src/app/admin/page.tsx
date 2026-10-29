@@ -24,6 +24,10 @@ export default function AdminDashboardPage() {
       autoConnect: true,
     });
 
+    s.on('connect', () => {
+      setSocket(s);
+    });
+
     s.on('connect_error', (err) => {
       console.warn('[Admin socket connection error]', err.message);
     });
@@ -31,8 +35,6 @@ export default function AdminDashboardPage() {
     s.on('admin:sync:rooms', (updatedRooms) => {
       setRooms(updatedRooms);
     });
-
-    setSocket(s);
 
     return () => {
       s.disconnect();

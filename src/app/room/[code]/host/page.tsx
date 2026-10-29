@@ -10,6 +10,7 @@ function HostDashboardContent() {
   const params = useParams();
   const roomCode = ((params?.code as string) || '').toUpperCase();
   const [hostState, setHostState] = useState<HostGameState | null>(null);
+  const [hostDomain] = useState(() => (typeof window !== 'undefined' ? window.location.host : 'retort.game'));
 
   useEffect(() => {
     const socket: Socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || '', {
@@ -22,6 +23,10 @@ function HostDashboardContent() {
 
     socket.on('sync:host', (data: HostGameState) => {
       setHostState(data);
+    });
+
+    socket.on('timer:tick', ({ remaining }: { remaining: number }) => {
+      setHostState((prev) => (prev ? { ...prev, phaseTimeRemaining: remaining } : null));
     });
 
     return () => {
@@ -52,7 +57,7 @@ function HostDashboardContent() {
               Join At
             </span>
             <span className="text-sm font-mono font-bold text-slate-200">
-              retort.game
+              {hostDomain}
             </span>
           </div>
         </div>
@@ -176,11 +181,23 @@ function HostDashboardContent() {
             >
               {/* Prompt Banner */}
               <div className="text-center bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
-                <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-400 mb-2 block">
-                  Duel {currentDuel.duelNumber} of {currentDuel.totalDuels}
-                </span>
+                <div className="flex items-center justify-center gap-4 mb-2">
+                  <span className="text-xs uppercase font-extrabold tracking-widest text-emerald-400 block">
+                    Duel {currentDuel.duelNumber} of {currentDuel.totalDuels}
+                  </span>
+                  {currentDuel.isJinx && (
+                    <span className="text-xs font-black uppercase tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/40 px-3 py-0.5 rounded-full">
+                      🚨 JINX DETECTED (0 PTS)
+                    </span>
+                  )}
+                  {currentDuel.isForfeit && (
+                    <span className="text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/40 px-3 py-0.5 rounded-full">
+                      ⏳ TIMEOUT FORFEIT
+                    </span>
+                  )}
+                </div>
                 <h2 className="text-3xl sm:text-4xl font-black text-white leading-tight">
-                  "{currentDuel.promptText}"
+                  &ldquo;{currentDuel.promptText}&rdquo;
                 </h2>
               </div>
 
@@ -215,24 +232,32 @@ function HostDashboardContent() {
                       </div>
 
                       <p className="text-2xl font-black text-white my-auto">
-                        "{option.text}"
+                        &ldquo;{option.text}&rdquo;
                       </p>
 
                       {phase === 'DUEL_REVEAL' && (
-                        <div className="border-t border-slate-800 pt-4 mt-4 flex items-center justify-between">
-                          <span className="text-sm font-bold text-amber-300">
-                            By {option.authorNickname}
-                          </span>
-                          <div className="flex gap-1.5">
-                            {votes.map((v) => (
-                              <span
-                                key={v.id}
-                                className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-800 text-slate-200"
-                              >
-                                {v.nickname}
-                              </span>
-                            ))}
+                        <div className="border-t border-slate-800 pt-4 mt-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-amber-300">
+                              By {option.authorNickname}
+                            </span>
+                            <div className="flex gap-1.5">
+                              {votes.map((v) => (
+                                <span
+                                  key={v.id}
+                                  className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-800 text-slate-200"
+                                >
+                                  {v.nickname}
+                                </span>
+                              ))}
+                            </div>
                           </div>
+
+                          {option.secretRoast && (
+                            <div className="text-xs text-amber-300/90 font-medium bg-amber-500/10 border border-amber-500/20 rounded-lg p-2">
+                              🎙️ <span className="font-bold">Host Roast:</span> &ldquo;{option.secretRoast}&rdquo;
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

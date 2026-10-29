@@ -12,7 +12,7 @@ export const LobbyView: React.FC = () => {
 
   const players = gameState.players || [];
   const isHost = gameState.isHost;
-  const canStart = players.length >= 2;
+  const canStart = players.length >= 3;
 
   const copyInvite = async () => {
     if (typeof window === 'undefined') return;
@@ -61,8 +61,8 @@ export const LobbyView: React.FC = () => {
           url,
         });
         return;
-      } catch (err: any) {
-        if (err.name === 'AbortError') return;
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
       }
     }
 
@@ -171,7 +171,7 @@ export const LobbyView: React.FC = () => {
                 : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
             }`}
           >
-            {canStart ? 'Start Game' : 'Waiting For Players (Min 2)'}
+            {canStart ? 'Start Game' : 'Waiting For Players (Min 3)'}
           </button>
         ) : (
           <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">

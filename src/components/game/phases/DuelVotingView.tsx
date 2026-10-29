@@ -32,7 +32,7 @@ export const DuelVotingView: React.FC = () => {
           JINX DETECTED!
         </div>
         <h2 className="text-xl font-black text-white">
-          "{duel.promptText}"
+          &ldquo;{duel.promptText}&rdquo;
         </h2>
         <p className="text-xs text-rose-300 max-w-xs leading-relaxed">
           Both players submitted the exact same punchline! Voting is cancelled and both receive 0 points!
@@ -51,7 +51,7 @@ export const DuelVotingView: React.FC = () => {
             Duel {duel.duelNumber} of {duel.totalDuels}
           </span>
           <h2 className="text-base sm:text-lg font-black text-white mt-1">
-            "{duel.promptText}"
+            &ldquo;{duel.promptText}&rdquo;
           </h2>
         </div>
 
@@ -61,7 +61,7 @@ export const DuelVotingView: React.FC = () => {
             ⚔️
           </div>
           <h3 className="text-lg font-black text-amber-200">
-            You're In This Duel!
+            You&apos;re In This Duel!
           </h3>
           <p className="text-xs text-amber-300/80 max-w-xs mx-auto leading-relaxed">
             One of the cards below is your punchline. You cannot vote in your own match.
@@ -103,7 +103,7 @@ export const DuelVotingView: React.FC = () => {
           <span className="font-mono">{duel.totalVotesCast}/{duel.totalEligibleVoters} Voted</span>
         </div>
         <h2 className="text-lg sm:text-xl font-black text-white leading-snug">
-          "{duel.promptText}"
+          &ldquo;{duel.promptText}&rdquo;
         </h2>
       </div>
 
@@ -111,8 +111,9 @@ export const DuelVotingView: React.FC = () => {
       <div className="flex-1 flex flex-col justify-end gap-3.5 pb-2">
         {(['A', 'B'] as const).map((key) => {
           const option = key === 'A' ? duel.optionA : duel.optionB;
-          const isSelected = selectedVote === key;
-          const isOtherSelected = selectedVote !== null && !isSelected;
+          const effectiveVote = selectedVote || duel.myVote || null;
+          const isSelected = effectiveVote === key;
+          const isOtherSelected = effectiveVote !== null && !isSelected;
 
           return (
             <motion.button
@@ -124,11 +125,11 @@ export const DuelVotingView: React.FC = () => {
               }}
               transition={{ type: 'spring', stiffness: 450, damping: 25 }}
               onClick={() => handleVote(key)}
-              disabled={selectedVote !== null}
+              disabled={effectiveVote !== null}
               className={`relative w-full min-h-[145px] flex flex-col justify-between p-5 rounded-2xl border-2 text-left transition-all ${
                 isSelected
                   ? 'bg-emerald-950/50 border-emerald-400 shadow-xl shadow-emerald-500/20'
-                  : 'bg-slate-900 border-slate-750 hover:border-slate-600 active:border-emerald-500'
+                  : 'bg-slate-900 border-slate-700 hover:border-slate-600 active:border-emerald-500'
               }`}
             >
               <div className="flex items-center justify-between w-full">

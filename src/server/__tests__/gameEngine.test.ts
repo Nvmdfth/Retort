@@ -260,4 +260,104 @@ describe('Retort GameEngine - Quiplash Specification Conformance', () => {
     expect(summary.isGameOver).toBe(false);
     expect(summary.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
+
+  test('Idempotency: calculateDuelResult does not duplicate points when called multiple times', () => {
+    const p1 = createMockPlayer('p1', 'Alice', true);
+    const p2 = createMockPlayer('p2', 'Bob');
+    const p3 = createMockPlayer('p3', 'Charlie');
+
+    let room = GameEngine.createRoom('IDEM', p1);
+    room.players['p2'] = p2;
+    room.players['p3'] = p3;
+    room = GameEngine.startWritingPhase(room);
+
+    const promptId = room.prompts[0].id;
+    GameEngine.recordAnswer(room, 'p1', promptId, 'Quip 1');
+    GameEngine.recordAnswer(room, 'p2', promptId, 'Quip 2');
+
+    room.duels = GameEngine.buildDuels(room);
+    const duelIndex = room.duels.findIndex((d) => d.promptId === promptId);
+    room.activeDuelIndex = duelIndex;
+    const duel = room.duels[duelIndex];
+
+    // Charlie votes for Option A
+    GameEngine.castVote(room, 'p3', duel.id, 'A');
+
+    // First calculation
+    const res1 = GameEngine.calculateDuelResult(room);
+    const scoreAfterFirst = room.players[duel.optionA.authorId].score;
+    expect(scoreAfterFirst).toBeGreaterThan(0);
+
+    // Second calculation (e.g. from timer expire or redundant event)
+    const res2 = GameEngine.calculateDuelResult(room);
+    const scoreAfterSecond = room.players[duel.optionA.authorId].score;
+
+    expect(scoreAfterSecond).toBe(scoreAfterFirst);
+    expect(res2).toEqual(res1);
+  });
+
+  test('Mutual Timeout: Neither player submitting answers awards 0 points to both', () => {
+    const p1 = createMockPlayer('p1', 'Alice', true);
+    const p2 = createMockPlayer('p2', 'Bob');
+    const p3 = createMockPlayer('p3', 'Charlie');
+
+    let room = GameEngine.createRoom('MUTL', p1);
+    room.players['p2'] = p2;
+    room.players['p3'] = p3;
+    room = GameEngine.startWritingPhase(room);
+    const promptId = room.prompts[0].id;
+
+    // Neither p1 nor p2 answers prompt 0
+    room.duels = GameEngine.buildDuels(room);
+    const duelIndex = room.duels.findIndex((d) => d.promptId === promptId);
+    room.activeDuelIndex = duelIndex;
+    const duel = room.duels[duelIndex];
+
+    expect(duel.isForfeit).toBe(true);
+    expect(duel.forfeitWinnerId).toBeUndefined();
+
+    const result = GameEngine.calculateDuelResult(room);
+    expect(result.pointsA).toBe(0);
+    expect(result.pointsB).toBe(0);
+    expect(result.winnerKey).toBe('TIE');
+    expect(room.players[duel.optionA.authorId].score).toBe(0);
+    expect(room.players[duel.optionB.authorId].score).toBe(0);
+  });
+
+  test('Multi-Round Progression & Round 3 Safety Quip Disabling', () => {
+    const p1 = createMockPlayer('p1', 'Alice', true);
+    const p2 = createMockPlayer('p2', 'Bob');
+    const p3 = createMockPlayer('p3', 'Charlie');
+
+    let room = GameEngine.createRoom('ROUN', p1);
+    room.players['p2'] = p2;
+    room.players['p3'] = p3;
+
+    // Round 1
+    room = GameEngine.startWritingPhase(room);
+    expect(room.round).toBe(1);
+    expect(room.phase).toBe('WRITING');
+    expect(room.prompts.length).toBe(3);
+
+    // Round 2 progression
+    room.round = 2;
+    room = GameEngine.startWritingPhase(room);
+    expect(room.round).toBe(2);
+    expect(room.phase).toBe('WRITING');
+    expect(room.prompts.every((p) => p.id.includes('prompt-2-'))).toBe(true);
+
+    // Round 3 progression & safety quip disabled
+    room.round = 3;
+    room = GameEngine.startWritingPhase(room);
+    expect(room.round).toBe(3);
+    expect(room.phase).toBe('WRITING');
+    expect(room.prompts.every((p) => p.isFinale === true)).toBe(true);
+
+    // Submitting with safety quip in Round 3 should be stripped
+    const promptId = room.assignments['p1'][0];
+    const subRes = GameEngine.recordAnswer(room, 'p1', promptId, 'Finale Quip', true);
+    expect(subRes.ok).toBe(true);
+    const savedAnswer = room.answers.find((a) => a.playerId === 'p1');
+    expect(savedAnswer?.isSafetyQuip).toBe(false);
+  });
 });

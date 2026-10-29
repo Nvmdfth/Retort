@@ -11,12 +11,21 @@ function RoomContent() {
   const roomCode = ((params?.code as string) || '').toUpperCase();
 
   const { gameState, initSocket, joinRoom, errorMessage } = useGameStore();
-  const [nickname, setNickname] = useState('');
+  const [nickname, setNickname] = useState(() =>
+    typeof window !== 'undefined' ? sessionStorage.getItem('retort_nickname') || '' : ''
+  );
   const [isJoining, setIsJoining] = useState(false);
 
   useEffect(() => {
     initSocket();
-  }, [initSocket]);
+    if (typeof window !== 'undefined') {
+      const savedCode = sessionStorage.getItem('retort_room_code');
+      const savedNick = sessionStorage.getItem('retort_nickname');
+      if (savedCode === roomCode && savedNick && !gameState) {
+        joinRoom(roomCode, savedNick).catch(() => {});
+      }
+    }
+  }, [initSocket, roomCode, gameState, joinRoom]);
 
   // If already connected to this room, render the game view controller
   if (gameState && gameState.roomCode === roomCode) {

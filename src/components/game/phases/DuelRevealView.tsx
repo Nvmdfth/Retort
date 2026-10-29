@@ -38,7 +38,7 @@ export const DuelRevealView: React.FC = () => {
             JINX! Duplicate Punchline
           </span>
           <h2 className="text-base sm:text-lg font-black text-white mt-1">
-            "{duel.promptText}"
+            &ldquo;{duel.promptText}&rdquo;
           </h2>
         </div>
 
@@ -52,7 +52,7 @@ export const DuelRevealView: React.FC = () => {
             Identical Minds!
           </div>
           <p className="text-sm font-extrabold text-white">
-            "{duel.optionA.text}"
+            &ldquo;{duel.optionA.text}&rdquo;
           </p>
           <div className="text-xs text-rose-300">
             Both players typed the exact same answer. Voting was cancelled and 0 points awarded!
@@ -81,7 +81,7 @@ export const DuelRevealView: React.FC = () => {
           )}
         </div>
         <h2 className="text-base sm:text-lg font-black text-white">
-          "{duel.promptText}"
+          &ldquo;{duel.promptText}&rdquo;
         </h2>
       </div>
 
@@ -139,7 +139,7 @@ export const DuelRevealView: React.FC = () => {
 
               {/* Punchline text */}
               <p className="text-base font-extrabold text-white">
-                "{option.text}"
+                &ldquo;{option.text}&rdquo;
               </p>
 
               {/* Safety Quip Penalty Tag */}
@@ -152,7 +152,7 @@ export const DuelRevealView: React.FC = () => {
               {/* Secret Roast (Quip Pro Quo) */}
               {option.secretRoast && (
                 <div className="text-[11px] font-semibold text-sky-300 bg-sky-950/50 border border-sky-500/30 p-2 rounded-xl">
-                  🎙️ <span className="font-bold">Host Roast:</span> "{option.secretRoast}"
+                  🎙️ <span className="font-bold">Host Roast:</span> &ldquo;{option.secretRoast}&rdquo;
                 </div>
               )}
 
