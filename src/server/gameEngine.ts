@@ -1,5 +1,6 @@
 import rawPrompts from './prompts.json';
 import rawSafetyQuips from './safetyQuips.json';
+import rawRoasts from './roasts.json';
 import type {
   RoomState,
   Player,
@@ -17,17 +18,6 @@ export const REVEAL_DURATION = 14;  // seconds (reading punchlines and host roas
 export const INTERMISSION_DURATION = 10; // seconds
 export const TOTAL_ROUNDS = 3;
 
-// Secret Roasts ("Quip Pro Quo")
-const SECRET_ROASTS: Record<string, string> = {
-  horse: 'Coincidentally, "Horse" is what a lazy party game player would type.',
-  pee: 'Hey, party games are not a watersport.',
-  urine: 'Hey, party games are not a watersport.',
-  carefully: 'A careful seduction. Reminds me of the books my mom kept by the bathtub.',
-  die: 'Actually, if you die there, you are both dead AND still there.',
-  retort: 'Look at you, typing the name of the app. Did you want a cookie?',
-  nothing: 'Nothing? Wow, really digging deep into the comedic archives for that one.',
-};
-
 function normalizeQuip(str: string): string {
   return str
     .toLowerCase()
@@ -35,6 +25,30 @@ function normalizeQuip(str: string): string {
     .replace(/^the\s+|^a\s+|^an\s+/i, '')
     .replace(/[^\w\s]/g, '')
     .replace(/\s+/g, ' ');
+}
+
+function getRoastForOption(text: string, isSafetyQuip?: boolean, isForfeit?: boolean): string | undefined {
+  if (isForfeit) {
+    const forfeits = rawRoasts.outcomes.forfeit;
+    return forfeits[Math.floor(Math.random() * forfeits.length)];
+  }
+  const norm = normalizeQuip(text);
+  const keywords = rawRoasts.keywords as Record<string, string>;
+  if (keywords[norm]) {
+    return keywords[norm];
+  }
+  // Check if any keyword matches a standalone word in the quip
+  const words = norm.split(' ');
+  for (const w of words) {
+    if (keywords[w]) {
+      return keywords[w];
+    }
+  }
+  if (isSafetyQuip) {
+    const sqRoasts = rawRoasts.outcomes.safety_quip;
+    return sqRoasts[Math.floor(Math.random() * sqRoasts.length)];
+  }
+  return undefined;
 }
 
 // Fisher-Yates unbiased array shuffle
@@ -237,9 +251,9 @@ export class GameEngine {
         // JINX check: both submitted, normalized strings match
         const isJinx = hasAnsA && hasAnsB && normalizeQuip(textA) === normalizeQuip(textB);
 
-        // Secret roasts ("Quip Pro Quo")
-        const roastA = SECRET_ROASTS[normalizeQuip(textA)];
-        const roastB = SECRET_ROASTS[normalizeQuip(textB)];
+        // Secret roasts ("Quip Pro Quo") & Situational Roasts
+        const roastA = getRoastForOption(textA, ansA?.isSafetyQuip, !hasAnsA);
+        const roastB = getRoastForOption(textB, ansB?.isSafetyQuip, !hasAnsB);
 
         // Eligible voters exclude the two authors
         const eligibleVoterIds = allPlayerIds.filter(

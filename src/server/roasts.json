@@ -1,0 +1,92 @@
+{
+  "keywords": {
+    "horse": "Coincidentally, \"Horse\" is what a lazy party game player would type.",
+    "pee": "Hey, party games are not a watersport.",
+    "urine": "Hey, party games are not a watersport.",
+    "carefully": "A careful seduction. Reminds me of the books my mom kept by the bathtub.",
+    "die": "Actually, if you die there, you are both dead AND still there.",
+    "retort": "Look at you, typing the name of the app. Did you want a cookie?",
+    "nothing": "Nothing? Wow, really digging deep into the comedic archives for that one.",
+    "dns": "It is always DNS. Even when it is clearly not DNS, it is DNS.",
+    "kubernetes": "Ah yes, solving a simple comedy problem with 47 nested YAML manifests.",
+    "k8s": "You could not even bother typing out all 10 letters of Kubernetes. Efficiency.",
+    "docker": "Works on your machine, but unfortunately we are running this on the host projector.",
+    "linux": "Found the guy who will spend the rest of the party trying to get Bluetooth audio to connect.",
+    "sudo": "Your privileges have been elevated to: Still Not Funny.",
+    "git": "git commit -m \"hoped nobody would notice this terrible punchline\"",
+    "vim": "Legends say you are still trying to figure out how to exit this duel.",
+    "emacs": "An entire operating system just to write a sub-par party game answer.",
+    "chatgpt": "Did you really use an LLM for a party game? Your prompt engineering needs work.",
+    "ai": "Artificial intelligence, meet natural comedic deficiency.",
+    "copilot": "GitHub Copilot suggested that? You should demand a refund on your subscription.",
+    "javascript": "undefined is not a function, and neither is your sense of humor.",
+    "python": "Significant indentation cannot save this punchline from a syntax error.",
+    "rust": "Memory safe, but spiritually hazardous.",
+    "php": "Bringing PHP to a comedy duel is like bringing a dial-up modem to an esports tournament.",
+    "jira": "Ticket RETORT-404: Player attempted humor, marked as Cannot Reproduce.",
+    "agile": "Let us circle back in our next sprint to discuss why that fell flat.",
+    "scrum": "Two-week sprint cycle just to deliver this minimum viable joke.",
+    "standup": "What did you do yesterday? Disappoint the audience. What are you doing today? Same thing.",
+    "production": "Deploying straight to production without unit testing your comedic timing.",
+    "wifi": "Your joke had high latency and dropped 90% of its packets.",
+    "printer": "PC LOAD LETTER. Even the HP LaserJet has better comedic timing.",
+    "yaml": "Invalid indentation on line 1. The comedic parser has rejected your submission.",
+    "cobol": "Your punchline was written during the Nixon administration.",
+    "sql": "DROP TABLE laughter; Query returned 0 rows.",
+    "bug": "It is not a bad joke, it is an undocumented entertainment feature.",
+    "mom": "Your mother called. She wants you to stop using her as a punchline.",
+    "your mom": "A \"your mom\" joke in the year of our Lord 2026? Groundbreaking.",
+    "dad": "Classic dad joke energy. Somewhere, a lawnmower just started itself.",
+    "boss": "Careful, HR is monitoring this WebSocket session.",
+    "beer": "Tell me you peaked in college without telling me you peaked in college.",
+    "pizza": "Cold pizza has more substance than this answer.",
+    "coffee": "Three cups of espresso and this was the peak creative output?",
+    "ex": "They did not leave you for your lack of ambition, they left you for this humor.",
+    "fart": "Ah, bathroom humor. Shakespeare himself is weeping in admiration.",
+    "poop": "Straight from the toddler playbook of comedic masterpieces.",
+    "butt": "Sophisticated. Refined. Clearly an Ivy League educated player.",
+    "batman": "I am vengeance. I am the night. I am... writing mediocre quips on my phone.",
+    "clown": "Look in the mirror if you need more material for Round 2.",
+    "taxes": "Filing an amended return for the 30 seconds I just wasted reading that.",
+    "crypto": "Your comedic value just dropped 87% in the last 4 minutes.",
+    "bitcoin": "HODLing onto that punchline like a bag of worthless tokens.",
+    "shrek": "Somebody once told me this joke was going to be funny. They lied.",
+    "bacon": "The year 2011 called, it wants its internet obsession back.",
+    "trump": "Political satire: because nothing brings friends together like awkward silence.",
+    "elon": "Buying this party game just to rename it to Retort-X.",
+    "idk": "If you do not know, why are we here?",
+    "food": "Riveting. Descriptive. An absolute feast of intellectual wit.",
+    "money": "Money cannot buy you love, and it definitely cannot buy comedic timing."
+  },
+  "outcomes": {
+    "clean_sweep": [
+      "A total, merciless massacre. Someone call a hearse for Card B.",
+      "100% of the vote! That was not a duel, that was a public execution.",
+      "Complete and utter annihilation. Did the other player even try?",
+      "A clean sweep! The audience showed absolutely zero mercy today.",
+      "Flawless victory. Card B has been sent directly to the shadow realm."
+    ],
+    "tie": [
+      "A 50/50 split! Both of you managed to divide the room equally in confusion.",
+      "A dead tie. Two jokes entered, neither one proved superior.",
+      "50/50! The audience was paralyzed by the mediocrity of both choices.",
+      "A split decision. The crowd cannot decide who to blame."
+    ],
+    "forfeit": [
+      "Bold strategy: simply freezing and letting the 90-second timer run out.",
+      "One player ghosted the prompt entirely. The empty void takes the victory.",
+      "Silence spoke louder than words. Unfortunately, silence scores 0 points.",
+      "A timeout forfeit! Somewhere, a ticking clock is laughing at you."
+    ],
+    "jinx": [
+      "JINX! Two great minds\u2014or two very predictable players\u2014just collided.",
+      "Identical punchlines! Great comedy synchronicity, but the rules award 0 points.",
+      "You both typed the exact same thing. Now stare at each other uncomfortably."
+    ],
+    "safety_quip": [
+      "A Safety Quip was deployed! 50% penalty applied for comedic cowardice.",
+      "Auto-filled by the algorithm. The house takes half your points as commission.",
+      "Safety Quip detected! When the pressure was on, the computer did the writing."
+    ]
+  }
+}
