@@ -11,9 +11,9 @@ import type {
   AdminRoomSummary,
 } from '../types/game';
 
-export const WRITING_DURATION = 60; // seconds
-export const VOTING_DURATION = 32;  // seconds (doubled per Quiplash specs)
-export const REVEAL_DURATION = 8;   // seconds
+export const WRITING_DURATION = 90; // seconds (instant advance when all submitted)
+export const VOTING_DURATION = 32;  // seconds (doubled per Quiplash specs, instant on all votes)
+export const REVEAL_DURATION = 14;  // seconds (reading punchlines and host roasts)
 export const INTERMISSION_DURATION = 10; // seconds
 export const TOTAL_ROUNDS = 3;
 

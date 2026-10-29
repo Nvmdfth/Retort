@@ -167,7 +167,7 @@ export class SocketServerManager {
         this.broadcastState(roomCode);
         const nextDuel = room.duels[room.activeDuelIndex];
         const isNextSpecial = nextDuel.isJinx || nextDuel.isForfeit;
-        const nextDuration = isNextSpecial ? 3 : nextDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+        const nextDuration = isNextSpecial ? 5 : nextDuel.eligibleVoterIds.length === 0 ? 10 : VOTING_DURATION;
         this.startPhaseTimer(roomCode, nextDuration, () => {
           this.transitionToReveal(roomCode);
         });
@@ -275,7 +275,7 @@ export class SocketServerManager {
     // If JINX or Forfeit, auto-transition in 3s; if 2-player testing, 5s
     const activeDuel = room.duels[0];
     const isSpecial = activeDuel.isJinx || activeDuel.isForfeit;
-    const votingDuration = isSpecial ? 3 : activeDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+    const votingDuration = isSpecial ? 5 : activeDuel.eligibleVoterIds.length === 0 ? 10 : VOTING_DURATION;
 
     this.startPhaseTimer(roomCode, votingDuration, () => {
       this.transitionToReveal(roomCode);
@@ -299,7 +299,7 @@ export class SocketServerManager {
 
         const nextDuel = room.duels[room.activeDuelIndex];
         const isNextSpecial = nextDuel.isJinx || nextDuel.isForfeit;
-        const nextDuration = isNextSpecial ? 3 : nextDuel.eligibleVoterIds.length === 0 ? 5 : VOTING_DURATION;
+        const nextDuration = isNextSpecial ? 5 : nextDuel.eligibleVoterIds.length === 0 ? 10 : VOTING_DURATION;
 
         this.startPhaseTimer(roomCode, nextDuration, () => {
           this.transitionToReveal(roomCode);
