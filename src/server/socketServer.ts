@@ -1,7 +1,17 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
-import { timingSafeEqual, createHash, randomInt, randomBytes } from 'crypto';
+import { randomInt, randomBytes } from 'crypto';
 import rawSafetyQuips from './safetyQuips.json';
+import { registerAdminHandlers } from './adminHandlers';
+import { reclaimSeat } from './roomSession';
+import {
+  isSecretValid,
+  resolveAdminSecret,
+  getClientIp,
+  isOriginAllowed,
+  SlidingWindowLimiter,
+  AuthLockout,
+} from './security';
 import {
   GameEngine,
   WRITING_DURATION,
@@ -17,18 +27,6 @@ import type {
   AdminRoomSummary,
 } from '../types/game';
 
-function isSecretValid(input: string, expected: string): boolean {
-  const normInput = input.trim();
-  const normExpected = expected.trim().replace(/^["']|["']$/g, '');
-
-  if (!normInput || !normExpected) return false;
-
-  const hashInput = createHash('sha256').update(normInput).digest();
-  const hashExpected = createHash('sha256').update(normExpected).digest();
-
-  return timingSafeEqual(hashInput, hashExpected);
-}
-
 type CustomSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
 interface ActiveTimer {
@@ -40,82 +38,76 @@ export class SocketServerManager {
   private io: Server<ClientToServerEvents, ServerToClientEvents>;
   private rooms: Map<string, RoomState> = new Map();
   private timers: Map<string, ActiveTimer> = new Map();
-  private failedAuthAttempts: Map<string, { count: number; lockedUntil: number }> = new Map();
-  private roomCreationPerIp: Map<string, number[]> = new Map();
+  private adminLockout = new AuthLockout(5, 60000);
+  private roomCreationLimiter = new SlidingWindowLimiter(10, 600000);
+  private roomLookupMissLimiter = new SlidingWindowLimiter(20, 60000);
+  private emptySince: Map<string, number> = new Map();
+  private adminSecret: string;
+  private roomGraceMs = parseInt(process.env.ROOM_GRACE_MS || '180000', 10);
 
   constructor(httpServer: HttpServer) {
     this.io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
-      cors: {
-        origin: (origin, callback) => {
-          // Allow requests with no origin (e.g. mobile apps, curl, test runners, same-origin)
-          if (!origin) return callback(null, true);
-
-          const allowedPatterns = [
-            /^https?:\/\/localhost(:\d+)?$/,
-            /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-            /^https?:\/\/192\.168\.\d+\.\d+(:\d+)?$/,
-            /^https?:\/\/([a-z0-9-]+\.)*wanmedia\.net$/,
-          ];
-
-          if (process.env.ALLOWED_ORIGINS) {
-            const custom = process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim());
-            if (custom.includes(origin)) return callback(null, true);
-          }
-
-          const isAllowed = allowedPatterns.some((pattern) => pattern.test(origin));
-          if (isAllowed) {
-            callback(null, true);
-          } else {
-            console.warn(`[CORS blocked] Origin not allowed: ${origin}`);
-            callback(new Error('CORS origin not allowed'));
-          }
-        },
-        methods: ['GET', 'POST'],
+      // Origin policy is enforced in allowRequest (it can compare against the Host header);
+      // cors only reflects the origin for requests that already passed that check.
+      allowRequest: (req, callback) => {
+        const ok = isOriginAllowed(req);
+        if (!ok) console.warn(`[CORS blocked] Origin not allowed: ${req.headers.origin}`);
+        callback(null, ok);
       },
+      cors: { origin: true, methods: ['GET', 'POST'] },
       maxHttpBufferSize: 1e5, // 100KB payload limit for DoS mitigation
     });
 
-    // Periodic sweep for abandoned rooms and expired rate-limit buckets
-    const sweepInterval = setInterval(() => {
-      const now = Date.now();
-      for (const [code, r] of this.rooms.entries()) {
-        const connectedCount = Object.values(r.players).filter((p) => p.isConnected).length;
-        if (connectedCount === 0) {
-          this.clearRoomTimer(code);
-          this.rooms.delete(code);
-        } else if (r.phase === 'LOBBY' && now - r.createdAt > 3600000) {
-          this.clearRoomTimer(code);
-          this.rooms.delete(code);
-        }
-      }
+    this.adminSecret = resolveAdminSecret();
 
-      for (const [ip, attempt] of this.failedAuthAttempts.entries()) {
-        if (attempt.lockedUntil < now && attempt.count > 0) {
-          this.failedAuthAttempts.delete(ip);
-        }
-      }
-      for (const [ip, timestamps] of this.roomCreationPerIp.entries()) {
-        const active = timestamps.filter((ts) => now - ts < 600000);
-        if (active.length === 0) {
-          this.roomCreationPerIp.delete(ip);
-        } else {
-          this.roomCreationPerIp.set(ip, active);
-        }
-      }
-    }, 300000);
+    // Periodic sweep for abandoned rooms and expired rate-limit buckets
+    const sweepInterval = setInterval(() => this.sweep(), Math.min(60000, Math.max(1000, this.roomGraceMs)));
     sweepInterval.unref();
 
     this.registerSocketEvents();
   }
 
-  private getClientIp(socket: Socket): string {
-    const cfIp = socket.handshake.headers['cf-connecting-ip'];
-    if (typeof cfIp === 'string' && cfIp.trim()) return cfIp.trim();
-    const xff = socket.handshake.headers['x-forwarded-for'];
-    if (typeof xff === 'string' && xff.trim()) {
-      return xff.split(',')[0].trim();
+  private sweep() {
+    const now = Date.now();
+    for (const [code, r] of this.rooms.entries()) {
+      const connectedCount = Object.values(r.players).filter((p) => p.isConnected).length;
+      if (connectedCount === 0) {
+        // Empty rooms survive a grace period so refreshed/dropped players can reconnect by token
+        const since = this.emptySince.get(code);
+        if (since === undefined) {
+          this.emptySince.set(code, now);
+        } else if (now - since >= this.roomGraceMs) {
+          this.deleteRoom(code);
+        }
+      } else if (r.phase === 'LOBBY' && now - r.createdAt > 3600000) {
+        this.deleteRoom(code);
+      }
     }
-    return socket.handshake.address || socket.id;
+    this.adminLockout.sweep(now);
+    this.roomCreationLimiter.sweep(now);
+    this.roomLookupMissLimiter.sweep(now);
+  }
+
+  private deleteRoom(code: string) {
+    this.clearRoomTimer(code);
+    this.rooms.delete(code);
+    this.emptySince.delete(code);
+    this.broadcastAdminSummaries();
+  }
+
+  private terminateRoom(code: string) {
+    this.io.to(`room:${code}`).emit('room:terminated', {
+      message: `Room ${code} has been closed by an administrator.`,
+    });
+    this.deleteRoom(code);
+  }
+
+  /** Notifies every room, then stops accepting connections. Call on SIGTERM. */
+  public shutdown(message = 'Server is restarting. Please rejoin in a moment.') {
+    for (const code of this.rooms.keys()) {
+      this.io.to(`room:${code}`).to(`host:${code}`).emit('room:terminated', { message });
+    }
+    return this.io.close();
   }
 
   private generateRoomCode(): string {
@@ -340,18 +332,28 @@ export class SocketServerManager {
       let currentPlayerId: string | null = null;
 
       // Host view registration
-      socket.on('host:subscribe', (data: { roomCode: string }) => {
+      socket.on('host:subscribe', (data, callback) => {
         try {
           const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
-          if (roomCode) {
-            socket.join(`host:${roomCode}`);
-            const room = this.rooms.get(roomCode);
-            if (room) {
-              socket.emit('sync:host', GameEngine.getHostState(room));
-            }
+          if (this.roomLookupMissLimiter.isLimited(getClientIp(socket))) {
+            callback?.({ ok: false, error: 'Too many lookups. Please wait a moment.' });
+            return;
           }
+          const room = roomCode ? this.rooms.get(roomCode) : undefined;
+          // The view key keeps the 4-letter code alone from exposing the projector feed;
+          // a wrong key is reported as "not found" and throttled like a missing room.
+          const key = typeof data?.key === 'string' ? data.key : '';
+          if (!room || !room.hostViewKey || !isSecretValid(key, room.hostViewKey)) {
+            this.roomLookupMissLimiter.hit(getClientIp(socket));
+            callback?.({ ok: false, error: 'Room not found' });
+            return;
+          }
+          socket.join(`host:${roomCode}`);
+          socket.emit('sync:host', GameEngine.getHostState(room));
+          callback?.({ ok: true });
         } catch (err) {
           console.error('[host:subscribe error]', err);
+          callback?.({ ok: false, error: 'Server error while subscribing' });
         }
       });
 
@@ -363,14 +365,8 @@ export class SocketServerManager {
             return;
           }
 
-          const clientIp = this.getClientIp(socket);
-          const now = Date.now();
-          const recentCreations = (this.roomCreationPerIp.get(clientIp) || []).filter(
-            (ts) => now - ts < 600000
-          );
-
-          const MAX_ROOMS_PER_IP = 10;
-          if (recentCreations.length >= MAX_ROOMS_PER_IP) {
+          const clientIp = getClientIp(socket);
+          if (this.roomCreationLimiter.isLimited(clientIp)) {
             callback?.({
               ok: false,
               error: 'Rate limit exceeded: Too many rooms created. Please wait a few minutes.',
@@ -401,8 +397,7 @@ export class SocketServerManager {
           const room = GameEngine.createRoom(roomCode, player);
           this.rooms.set(roomCode, room);
 
-          recentCreations.push(now);
-          this.roomCreationPerIp.set(clientIp, recentCreations);
+          this.roomCreationLimiter.hit(clientIp);
 
           currentRoomCode = roomCode;
           currentPlayerId = socket.id;
@@ -428,9 +423,14 @@ export class SocketServerManager {
 
           const code = data.roomCode.toUpperCase().trim();
           const cleanNick = data.nickname.trim().slice(0, 16) || 'Player';
+          if (this.roomLookupMissLimiter.isLimited(getClientIp(socket))) {
+            callback?.({ ok: false, error: 'Too many lookups. Please wait a moment.' });
+            return;
+          }
           const room = this.rooms.get(code);
 
           if (!room) {
+            this.roomLookupMissLimiter.hit(getClientIp(socket));
             callback?.({ ok: false, error: 'Room not found' });
             return;
           }
@@ -442,45 +442,14 @@ export class SocketServerManager {
             : null;
 
           if (reconnectingPlayer) {
-            const oldId = reconnectingPlayer.id;
-            delete room.players[oldId];
-            reconnectingPlayer.id = socket.id;
-            reconnectingPlayer.isConnected = true;
-            room.players[socket.id] = reconnectingPlayer;
+            reclaimSeat(room, reconnectingPlayer, socket.id);
 
-            // Re-assign prompt assignments
-            if (room.assignments[oldId]) {
-              const assigned = room.assignments[oldId];
-              delete room.assignments[oldId];
-              room.assignments[socket.id] = assigned;
+            // A returning player of an abandoned room takes the host seat back if nobody holds it
+            if (!Object.values(room.players).some((p) => p.isHost && p.isConnected)) {
+              Object.values(room.players).forEach((p) => { p.isHost = false; });
+              reconnectingPlayer.isHost = true;
             }
-
-            // Re-assign submitted answers
-            room.answers.forEach((ans) => {
-              if (ans.playerId === oldId) ans.playerId = socket.id;
-            });
-
-            // Re-assign duel authorships, eligible voters, forfeit winners, and votes
-            room.duels.forEach((duel) => {
-              if (duel.optionA.authorId === oldId) duel.optionA.authorId = socket.id;
-              if (duel.optionB.authorId === oldId) duel.optionB.authorId = socket.id;
-              if (duel.forfeitWinnerId === oldId) duel.forfeitWinnerId = socket.id;
-              duel.eligibleVoterIds = duel.eligibleVoterIds.map((id) => (id === oldId ? socket.id : id));
-              if (duel.votes[oldId]) {
-                const choice = duel.votes[oldId];
-                delete duel.votes[oldId];
-                duel.votes[socket.id] = choice;
-              }
-            });
-
-            if (room.activeDuelResult) {
-              room.activeDuelResult.votesA.forEach((v) => { if (v.id === oldId) v.id = socket.id; });
-              room.activeDuelResult.votesB.forEach((v) => { if (v.id === oldId) v.id = socket.id; });
-            }
-
-            room.recentScoreDeltas.forEach((d) => {
-              if (d.playerId === oldId) d.playerId = socket.id;
-            });
+            this.emptySince.delete(code);
 
             currentRoomCode = code;
             currentPlayerId = socket.id;
@@ -511,6 +480,7 @@ export class SocketServerManager {
           };
 
           room.players[socket.id] = player;
+          this.emptySince.delete(code);
           currentRoomCode = code;
           currentPlayerId = socket.id;
 
@@ -711,95 +681,13 @@ export class SocketServerManager {
         }
       });
 
-      // Admin authentication
-      socket.on('admin:auth', (data, callback) => {
-        try {
-          const now = Date.now();
-          const clientIp = this.getClientIp(socket);
-          const attempt = this.failedAuthAttempts.get(clientIp);
-          if (attempt && attempt.lockedUntil > now) {
-            const remainingSec = Math.ceil((attempt.lockedUntil - now) / 1000);
-            callback?.({ ok: false, error: `Too many failed attempts. Locked out for ${remainingSec}s.` });
-            return;
-          }
-
-          const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
-          const validSecret = (process.env.ADMIN_SECRET || 'RetortAdmin').trim().replace(/^["']|["']$/g, '');
-          const ok = isSecretValid(secret, validSecret);
-          console.log(`[admin:auth] ip=${clientIp} socket=${socket.id} attempt=${ok ? 'SUCCESS' : 'FAILED'}`);
-          if (ok) {
-            this.failedAuthAttempts.delete(clientIp);
-            socket.join('admin:dashboard');
-            callback?.({ ok: true });
-            socket.emit('admin:sync:rooms', this.getAllAdminSummaries());
-          } else {
-            const count = (attempt?.count || 0) + 1;
-            const lockedUntil = count >= 5 ? now + 60000 : 0;
-            this.failedAuthAttempts.set(clientIp, { count, lockedUntil });
-            callback?.({ ok: false, error: 'Invalid admin credentials' });
-          }
-        } catch (err) {
-          console.error('[admin:auth error]', err);
-          callback?.({ ok: false, error: 'Admin authentication error' });
-        }
-      });
-
-      // Admin list active rooms (enforces authenticated admin session)
-      socket.on('admin:rooms:list', (callback) => {
-        try {
-          if (!socket.rooms.has('admin:dashboard')) {
-            callback?.([]);
-            return;
-          }
-          callback?.(this.getAllAdminSummaries());
-        } catch {
-          callback?.([]);
-        }
-      });
-
-      // Admin terminate game room (enforces authenticated admin session)
-      socket.on('admin:room:terminate', (data, callback) => {
-        try {
-          if (!socket.rooms.has('admin:dashboard')) {
-            callback?.({ ok: false });
-            return;
-          }
-          const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
-          if (!roomCode || !this.rooms.has(roomCode)) {
-            callback?.({ ok: false });
-            return;
-          }
-          this.clearRoomTimer(roomCode);
-          this.io.to(`room:${roomCode}`).emit('room:terminated', {
-            message: `Room ${roomCode} has been closed by an administrator.`,
-          });
-          this.rooms.delete(roomCode);
-          this.broadcastAdminSummaries();
-          callback?.({ ok: true });
-        } catch (err) {
-          console.error('[admin:room:terminate error]', err);
-          callback?.({ ok: false });
-        }
-      });
-
-      // Admin force advance phase (enforces authenticated admin session)
-      socket.on('admin:room:advance', (data, callback) => {
-        try {
-          if (!socket.rooms.has('admin:dashboard')) {
-            callback?.({ ok: false });
-            return;
-          }
-          const roomCode = typeof data?.roomCode === 'string' ? data.roomCode.toUpperCase().trim() : '';
-          if (!roomCode || !this.rooms.has(roomCode)) {
-            callback?.({ ok: false });
-            return;
-          }
-          this.advanceRoomPhase(roomCode);
-          callback?.({ ok: true });
-        } catch (err) {
-          console.error('[admin:room:advance error]', err);
-          callback?.({ ok: false });
-        }
+      registerAdminHandlers(socket, {
+        adminSecret: this.adminSecret,
+        lockout: this.adminLockout,
+        hasRoom: (code) => this.rooms.has(code),
+        getSummaries: () => this.getAllAdminSummaries(),
+        terminateRoom: (code) => this.terminateRoom(code),
+        advanceRoom: (code) => this.advanceRoomPhase(code),
       });
 
       // Disconnect handling
@@ -812,11 +700,12 @@ export class SocketServerManager {
           if (room.players[currentPlayerId]) {
             room.players[currentPlayerId].isConnected = false;
 
-            // If host left, elect next available player as host
+            // If host left, hand the seat to another connected player; with nobody else
+            // connected the host keeps it so they can reclaim it on reconnect
             if (room.players[currentPlayerId].isHost) {
-              room.players[currentPlayerId].isHost = false;
               const nextHost = Object.values(room.players).find((p) => p.isConnected);
               if (nextHost) {
+                room.players[currentPlayerId].isHost = false;
                 nextHost.isHost = true;
               }
             }
@@ -824,8 +713,9 @@ export class SocketServerManager {
 
           const remainingActive = Object.values(room.players).filter((p) => p.isConnected);
           if (remainingActive.length === 0) {
-            this.clearRoomTimer(currentRoomCode);
-            this.rooms.delete(currentRoomCode);
+            // Keep the room for the reconnect grace period; sweep() deletes it afterwards
+            this.emptySince.set(currentRoomCode, Date.now());
+            this.broadcastAdminSummaries();
           } else {
             this.broadcastState(currentRoomCode);
           }

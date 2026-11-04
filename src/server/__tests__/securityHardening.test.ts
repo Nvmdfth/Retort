@@ -43,6 +43,7 @@ describe('Security Hardening & OWASP Vulnerability Verification', () => {
   let sock2: TypedClientSocket;
 
   beforeAll(async () => {
+    process.env.TRUST_PROXY = '1'; // lockout/rate-limit tests drive the client IP via cf-connecting-ip
     httpServer = createServer();
     setupSocketServer(httpServer);
 

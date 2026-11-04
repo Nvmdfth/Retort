@@ -327,18 +327,24 @@ describe('Retort Socket Server Real-Time Integration', () => {
       new Promise<void>((r) => p3.on('connect', r)),
     ]);
 
+    const hostKeyPromise = new Promise<string>((resolve) => {
+      hostUser.on('sync:state', (s) => s.hostViewKey && resolve(s.hostViewKey));
+    });
     const createRes = await new Promise<{ ok: boolean; roomCode?: string }>((r) => {
       hostUser.emit('room:create', { nickname: 'Host' }, r);
     });
     const roomCode = createRes.roomCode!;
+    const hostViewKey = await hostKeyPromise;
 
     await Promise.all([
       new Promise<void>((r) => p2.emit('room:join', { roomCode, nickname: 'Bob' }, () => r())),
       new Promise<void>((r) => p3.emit('room:join', { roomCode, nickname: 'Charlie' }, () => r())),
     ]);
 
-    // TV subscribes to host display feed
-    tvScreen.emit('host:subscribe', { roomCode });
+    // A subscriber without the view key is refused; with it, the feed is granted
+    const denied = await new Promise<{ ok: boolean }>((r) => tvScreen.emit('host:subscribe', { roomCode, key: 'wrong' }, r));
+    expect(denied.ok).toBe(false);
+    tvScreen.emit('host:subscribe', { roomCode, key: hostViewKey });
 
     const tickPromise = new Promise<{ remaining: number }>((resolve) => {
       tvScreen.on('timer:tick', (data) => resolve(data));
@@ -417,5 +423,33 @@ describe('Retort Socket Server Real-Time Integration', () => {
     hostUser.disconnect();
     player2.disconnect();
     player3.disconnect();
+  });
+});
+
+describe('Reconnect grace period', () => {
+  test('room survives the last player disconnecting and can be rejoined by token', async () => {
+    const httpServer = createServer();
+    setupSocketServer(httpServer);
+    await new Promise<void>((r) => httpServer.listen(0, '127.0.0.1', () => r()));
+    const addr = httpServer.address();
+    const url = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    const a = Client(url, { transports: ['websocket'] });
+    await new Promise<void>((r) => a.on('connect', r));
+    const created = await new Promise<{ ok: boolean; roomCode?: string; sessionToken?: string }>((r) =>
+      a.emit('room:create', { nickname: 'Solo' }, r)
+    );
+    expect(created.ok).toBe(true);
+    a.disconnect();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const b = Client(url, { transports: ['websocket'] });
+    await new Promise<void>((r) => b.on('connect', r));
+    const rejoin = await new Promise<{ ok: boolean }>((r) =>
+      b.emit('room:join', { roomCode: created.roomCode!, nickname: 'Solo', sessionToken: created.sessionToken }, r)
+    );
+    expect(rejoin.ok).toBe(true);
+    b.disconnect();
+    httpServer.close();
   });
 });

@@ -1,3 +1,4 @@
+import { randomInt, randomBytes } from 'crypto';
 import rawPrompts from './prompts.json';
 import rawSafetyQuips from './safetyQuips.json';
 import rawRoasts from './roasts.json';
@@ -30,7 +31,7 @@ function normalizeQuip(str: string): string {
 function getRoastForOption(text: string, isSafetyQuip?: boolean, isForfeit?: boolean): string | undefined {
   if (isForfeit) {
     const forfeits = rawRoasts.outcomes.forfeit;
-    return forfeits[Math.floor(Math.random() * forfeits.length)];
+    return forfeits[randomInt(0, forfeits.length)];
   }
   const norm = normalizeQuip(text);
   const keywords = rawRoasts.keywords as Record<string, string>;
@@ -46,7 +47,7 @@ function getRoastForOption(text: string, isSafetyQuip?: boolean, isForfeit?: boo
   }
   if (isSafetyQuip) {
     const sqRoasts = rawRoasts.outcomes.safety_quip;
-    return sqRoasts[Math.floor(Math.random() * sqRoasts.length)];
+    return sqRoasts[randomInt(0, sqRoasts.length)];
   }
   return undefined;
 }
@@ -55,7 +56,7 @@ function getRoastForOption(text: string, isSafetyQuip?: boolean, isForfeit?: boo
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(0, i + 1);
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
@@ -64,12 +65,13 @@ function shuffleArray<T>(array: T[]): T[] {
 export class GameEngine {
   public static getRandomSafetyQuip(): string {
     const pool = rawSafetyQuips as string[];
-    return pool[Math.floor(Math.random() * pool.length)];
+    return pool[randomInt(0, pool.length)];
   }
 
   public static createRoom(roomCode: string, hostPlayer: Player): RoomState {
     return {
       roomCode,
+      hostViewKey: randomBytes(8).toString('hex'),
       phase: 'LOBBY',
       phaseTimeRemaining: 0,
       phaseDuration: 0,
@@ -96,8 +98,15 @@ export class GameEngine {
     const n = playerList.length;
 
     // Pick N unique prompts randomly with Fisher-Yates
-    const shuffledDeck = shuffleArray(rawPrompts);
     const needed = Math.max(n, 2);
+    let used = room.usedPrompts || [];
+    let freshDeck = (rawPrompts as string[]).filter((t) => !used.includes(t));
+    if (freshDeck.length < needed) {
+      // Deck exhausted for this room: start over rather than dealing short
+      used = [];
+      freshDeck = rawPrompts as string[];
+    }
+    const shuffledDeck = shuffleArray(freshDeck);
     const selectedPrompts: Prompt[] = [];
 
     for (let idx = 0; idx < needed; idx++) {
@@ -135,6 +144,7 @@ export class GameEngine {
     room.phaseDuration = WRITING_DURATION;
     room.phaseTimeRemaining = WRITING_DURATION;
     room.prompts = selectedPrompts;
+    room.usedPrompts = [...used, ...selectedPrompts.map((p) => p.text)];
     room.assignments = assignments;
     room.answers = [];
     room.duels = [];
@@ -261,7 +271,7 @@ export class GameEngine {
         );
 
         // Randomize Option A vs Option B
-        const swap = Math.random() < 0.5;
+        const swap = randomInt(0, 2) === 0;
 
         duels.push({
           id: `duel-${prompt.id}-${idx}`,
@@ -545,6 +555,7 @@ export class GameEngine {
 
     const clientState: ClientGameState = {
       roomCode: room.roomCode,
+      hostViewKey: isHost ? room.hostViewKey : undefined,
       phase: room.phase,
       phaseTimeRemaining: room.phaseTimeRemaining,
       phaseDuration: room.phaseDuration,

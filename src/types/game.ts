@@ -82,6 +82,10 @@ export interface ScoreDelta {
 /** Authoritative internal server room state */
 export interface RoomState {
   roomCode: string;
+  /** Secret required to subscribe a projector/TV view to this room */
+  hostViewKey?: string;
+  /** Prompt texts already dealt in this room, to avoid repeats */
+  usedPrompts?: string[];
   phase: GamePhase;
   phaseTimeRemaining: number;
   phaseDuration: number;
@@ -102,6 +106,8 @@ export interface RoomState {
 /** Scrubbed payload streamed to mobile player clients */
 export interface ClientGameState {
   roomCode: string;
+  /** Present for the host only: appended to the projector URL as ?k= */
+  hostViewKey?: string;
   phase: GamePhase;
   phaseTimeRemaining: number;
   phaseDuration: number;
@@ -222,7 +228,7 @@ export interface AdminRoomSummary {
 }
 
 export interface ClientToServerEvents {
-  'host:subscribe': (data: { roomCode: string }) => void;
+  'host:subscribe': (data: { roomCode: string; key?: string }, callback?: (res: { ok: boolean; error?: string }) => void) => void;
   'room:create': (data: { nickname: string; sessionToken?: string }, callback: (res: { ok: boolean; roomCode?: string; error?: string; sessionToken?: string; playerId?: string }) => void) => void;
   'room:join': (data: { roomCode: string; nickname: string; sessionToken?: string; playerId?: string }, callback: (res: { ok: boolean; error?: string; sessionToken?: string; playerId?: string }) => void) => void;
   'game:start': (callback?: (res: { ok: boolean; error?: string }) => void) => void;
