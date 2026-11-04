@@ -21,7 +21,8 @@ test.describe('Dual-Mode TV / Projector Host Route', () => {
     });
     const tvPage = await tvContext.newPage();
 
-    await tvPage.goto(`/room/${roomCode}/host`);
+    const tvHref = await phonePage.getByRole('link', { name: /Projector \/ TV View/ }).getAttribute('href');
+    await tvPage.goto(tvHref!);
 
     // Verify TV UI elements
     await expect(tvPage.getByText('RETORT', { exact: true })).toBeVisible({ timeout: 10000 });

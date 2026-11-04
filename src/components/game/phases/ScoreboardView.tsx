@@ -16,6 +16,7 @@ export const ScoreboardView: React.FC = () => {
         particleCount: 80,
         spread: 90,
         origin: { y: 0.4 },
+        disableForReducedMotion: true,
       });
     }
   }, [isGameOver]);

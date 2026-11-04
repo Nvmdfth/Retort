@@ -17,6 +17,7 @@ export const DuelRevealView: React.FC = () => {
         particleCount: 70,
         spread: 80,
         origin: { y: 0.6 },
+        disableForReducedMotion: true,
       });
     }
   }, [results]);

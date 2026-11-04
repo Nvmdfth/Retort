@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { motion, AnimatePresence, type Variants } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig, type Variants } from 'framer-motion';
 import { useGameStore } from '@/stores/useGameStore';
 import { LobbyView } from './phases/LobbyView';
 import { WritingView } from './phases/WritingView';
@@ -17,7 +17,7 @@ const viewVariants: Variants = {
 };
 
 export const GameViewController: React.FC = () => {
-  const { gameState, initSocket, errorMessage, clearError } = useGameStore();
+  const { gameState, initSocket, errorMessage, clearError, isConnected } = useGameStore();
 
   useEffect(() => {
     initSocket();
@@ -35,6 +35,7 @@ export const GameViewController: React.FC = () => {
   }
 
   return (
+    <MotionConfig reducedMotion="user">
     <main className="relative flex flex-col min-h-dvh max-w-md mx-auto w-full bg-slate-950 text-slate-100 overflow-hidden select-none touch-manipulation px-4 py-3">
       {/* Top Header Bar */}
       <header className="flex items-center justify-between gap-3 pb-3 border-b border-slate-800">
@@ -54,6 +55,17 @@ export const GameViewController: React.FC = () => {
           />
         )}
       </header>
+
+      {/* Connection Banner */}
+      {!isConnected && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="my-2 p-2.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold text-center"
+        >
+          Connection lost. Reconnecting… your answers can&apos;t be sent until you&apos;re back.
+        </div>
+      )}
 
       {/* Error Toast Banner */}
       <AnimatePresence>
@@ -103,5 +115,6 @@ export const GameViewController: React.FC = () => {
         </AnimatePresence>
       </div>
     </main>
+    </MotionConfig>
   );
 };

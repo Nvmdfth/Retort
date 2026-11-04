@@ -179,9 +179,10 @@ export const LobbyView: React.FC = () => {
           </div>
         )}
 
+        {gameState.hostViewKey && (
         <div className="text-center">
           <a
-            href={`/room/${gameState.roomCode}/host`}
+            href={`/room/${gameState.roomCode}/host?k=${gameState.hostViewKey}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[11px] font-medium text-slate-400 hover:text-slate-200 underline underline-offset-4"
@@ -189,6 +190,7 @@ export const LobbyView: React.FC = () => {
             Open Projector / TV View →
           </a>
         </div>
+        )}
       </div>
     </div>
   );

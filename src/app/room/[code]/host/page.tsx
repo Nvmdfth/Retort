@@ -4,22 +4,32 @@ import React, { useEffect, useState, Suspense } from 'react';
 import { useParams } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { HostGameState } from '@/types/game';
+import type { HostGameState, ClientToServerEvents, ServerToClientEvents } from '@/types/game';
 
 function HostDashboardContent() {
   const params = useParams();
   const roomCode = ((params?.code as string) || '').toUpperCase();
   const [hostState, setHostState] = useState<HostGameState | null>(null);
+  const [feedError, setFeedError] = useState<string | null>(null);
   const [hostDomain] = useState(() => (typeof window !== 'undefined' ? window.location.host : 'retort.game'));
 
   useEffect(() => {
-    const socket: Socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || '', {
+    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(process.env.NEXT_PUBLIC_SOCKET_URL || '', {
       transports: ['websocket', 'polling'],
     });
 
-    socket.on('connect', () => {
-      socket.emit('host:subscribe', { roomCode });
-    });
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const subscribe = () => {
+      const key = new URLSearchParams(window.location.search).get('k') || undefined;
+      socket.emit('host:subscribe', { roomCode, key }, (res) => {
+        setFeedError(res?.ok ? null : res?.error || 'Unable to subscribe to this room');
+        // Room may not exist yet (TV opened before the host created it): keep trying
+        if (!res?.ok) retry = setTimeout(subscribe, 3000);
+      });
+    };
+    socket.on('connect', subscribe);
+
+    socket.on('connect_error', () => setFeedError('Cannot reach the server. Retrying…'));
 
     socket.on('sync:host', (data: HostGameState) => {
       setHostState(data);
@@ -30,6 +40,7 @@ function HostDashboardContent() {
     });
 
     return () => {
+      clearTimeout(retry);
       socket.disconnect();
     };
   }, [roomCode]);
@@ -37,7 +48,9 @@ function HostDashboardContent() {
   if (!hostState) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 font-mono">
-        Connecting TV / Projector Feed for Room {roomCode}...
+        {feedError
+          ? `Room ${roomCode}: ${feedError}`
+          : `Connecting TV / Projector Feed for Room ${roomCode}...`}
       </div>
     );
   }

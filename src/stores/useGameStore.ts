@@ -18,6 +18,7 @@ interface GameStore {
   drafts: Record<string, string>;
   safetyQuipUsed: Record<string, boolean>;
   errorMessage: string | null;
+  isConnected: boolean;
 
   initSocket: () => void;
   createRoom: (nickname: string) => Promise<string>;
@@ -34,6 +35,13 @@ interface GameStore {
 
 let errorTimeout: NodeJS.Timeout | null = null;
 
+const SESSION_KEYS = ['retort_room_code', 'retort_nickname', 'retort_player_id', 'retort_session_token'];
+
+function clearSession() {
+  if (typeof window === 'undefined') return;
+  SESSION_KEYS.forEach((k) => sessionStorage.removeItem(k));
+}
+
 const SAFETY_QUIP_POOL = rawSafetyQuips as string[];
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -45,6 +53,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   drafts: {},
   safetyQuipUsed: {},
   errorMessage: null,
+  isConnected: false,
 
   initSocket: () => {
     if (get().socket) return;
@@ -53,6 +62,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const socket: TypedSocket = io(socketUrl, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
+    });
+
+    // socket.io reconnects with a new socket id and no room membership, so re-claim the seat
+    // with the stored session token whenever a socket reconnects mid-game.
+    socket.on('connect', () => {
+      set({ isConnected: true });
+      if (typeof window === 'undefined' || !get().gameState) return;
+      const roomCode = sessionStorage.getItem('retort_room_code');
+      const nickname = sessionStorage.getItem('retort_nickname');
+      const sessionToken = sessionStorage.getItem('retort_session_token');
+      if (!roomCode || !nickname || !sessionToken) return;
+      socket.emit('room:join', { roomCode, nickname, sessionToken }, (res) => {
+        if (res.ok) {
+          if (res.playerId) sessionStorage.setItem('retort_player_id', res.playerId);
+        } else {
+          clearSession();
+          set({ gameState: null, errorMessage: res.error || 'Could not rejoin the room' });
+        }
+      });
+    });
+
+    socket.on('disconnect', () => {
+      set({ isConnected: false });
     });
 
     socket.on('sync:state', (newState) => {
@@ -90,6 +122,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     socket.on('room:terminated', ({ message }) => {
+      clearSession();
       set({ errorMessage: message, gameState: null });
       if (typeof window !== 'undefined') {
         setTimeout(() => {
@@ -195,6 +228,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const clean = text.trim().slice(0, 45);
     if (!clean) return;
 
+    if (!get().isConnected) {
+      set({ errorMessage: 'Reconnecting… try again in a moment' });
+      return;
+    }
+
     const usedSafety = isSafetyQuip ?? Boolean(get().safetyQuipUsed[promptId]);
 
     set({ isSubmitting: true });
@@ -207,6 +245,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   castVote: (duelId: string, choice: 'A' | 'B') => {
+    if (!get().isConnected) {
+      set({ errorMessage: 'Reconnecting… try again in a moment' });
+      return;
+    }
+
     const previousVote = get().selectedVote;
     set({ selectedVote: choice });
 

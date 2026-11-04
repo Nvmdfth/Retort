@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { AdminRoomSummary, ClientToServerEvents, ServerToClientEvents } from '@/types/game';
@@ -9,6 +9,8 @@ type AdminSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 export default function AdminDashboardPage() {
   const [secret, setSecret] = useState('');
+  const secretRef = useRef('');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<AdminRoomSummary[]>([]);
@@ -26,10 +28,26 @@ export default function AdminDashboardPage() {
 
     s.on('connect', () => {
       setSocket(s);
+      setConnectionError(null);
+      // Server-side admin membership belongs to the old socket id, so re-authenticate after a reconnect
+      if (secretRef.current) {
+        s.emit('admin:auth', { secret: secretRef.current }, (res) => {
+          if (!res?.ok) {
+            secretRef.current = '';
+            setIsAuthenticated(false);
+            setAuthError(res?.error || 'Session expired. Please sign in again.');
+          }
+        });
+      }
+    });
+
+    s.on('disconnect', () => {
+      setConnectionError('Connection lost. Reconnecting…');
     });
 
     s.on('connect_error', (err) => {
       console.warn('[Admin socket connection error]', err.message);
+      setConnectionError(`Cannot reach server: ${err.message}`);
     });
 
     s.on('admin:sync:rooms', (updatedRooms) => {
@@ -59,6 +77,7 @@ export default function AdminDashboardPage() {
       clearTimeout(timer);
       setIsBusy(false);
       if (res?.ok) {
+        secretRef.current = secret;
         setIsAuthenticated(true);
         setStatusMessage('Authenticated as Administrator.');
       } else {
@@ -116,6 +135,12 @@ export default function AdminDashboardPage() {
               Silent real-time game telemetry & room administration
             </p>
           </div>
+
+          {connectionError && (
+            <div role="status" className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-semibold text-center">
+              {connectionError}
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -185,6 +210,12 @@ export default function AdminDashboardPage() {
           </button>
         </div>
       </header>
+
+      {connectionError && (
+        <div role="status" className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-semibold text-center">
+          {connectionError}
+        </div>
+      )}
 
       {/* Global Status Banner */}
       {statusMessage && (
