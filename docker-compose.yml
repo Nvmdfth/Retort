@@ -3,15 +3,21 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-}
     container_name: retort
     restart: unless-stopped
+    stop_grace_period: 10s
     ports:
       - "9847:9847"
     environment:
       - NODE_ENV=production
       - PORT=9847
       - HOSTNAME=0.0.0.0
-      - ADMIN_SECRET=${ADMIN_SECRET:-RetortAdmin}
+      - ADMIN_SECRET=${ADMIN_SECRET:?Set ADMIN_SECRET in .env (see .env.example)}
+      - TRUST_PROXY=${TRUST_PROXY:-0}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - ROOM_GRACE_MS=${ROOM_GRACE_MS:-180000}
     env_file:
       - path: .env
         required: false

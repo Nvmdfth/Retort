@@ -6,3 +6,7 @@ node_modules
 .DS_Store
 .env.local
 coverage
+docs
+test-results
+e2e
+.github
