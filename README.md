@@ -20,6 +20,14 @@ A modern, real-time, mobile-first party game web app built with Next.js App Rout
 ### Prerequisites
 - [Bun](https://bun.sh/) 1.1+ (or Node.js 20+)
 
+### Configuration
+
+Copy `.env.example` to `.env`. Production (`NODE_ENV=production`, including Docker) refuses to start unless
+`ADMIN_SECRET` is set to a non-default value of 8+ characters. Other knobs: `TRUST_PROXY=1` (honor proxy IP
+headers, only behind a trusted proxy), `ALLOWED_ORIGINS` (extra cross-origin browsers), `ROOM_GRACE_MS`
+(reconnect window for empty rooms). `GET /healthz` returns `ok` for container health checks. Reference material
+lives in `docs/`.
+
 ### Running with Docker Compose (Port 9847)
 
 ```bash
