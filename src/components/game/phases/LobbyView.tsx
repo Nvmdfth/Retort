@@ -1,12 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/useGameStore';
 
 export const LobbyView: React.FC = () => {
   const { gameState, startGame } = useGameStore();
   const [copied, setCopied] = useState(false);
+  // false on the server and during hydration, then the real capability on the client
+  const canNativeShare = useSyncExternalStore(
+    () => () => {},
+    () => typeof navigator.share === 'function',
+    () => false
+  );
 
   if (!gameState) return null;
 
@@ -82,28 +88,22 @@ export const LobbyView: React.FC = () => {
             {gameState.roomCode}
           </div>
 
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex items-center justify-center">
             <button
               type="button"
-              onClick={copyInvite}
+              onClick={canNativeShare ? shareInvite : copyInvite}
               className={`cursor-pointer select-none active:scale-95 text-xs font-bold px-3.5 py-2 rounded-xl transition-all border shadow-sm ${
                 copied
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
               }`}
             >
-              {copied ? 'Copied to Clipboard! ✓' : '📋 Copy Invite Link'}
+              {copied
+                ? 'Copied to Clipboard! ✓'
+                : canNativeShare
+                  ? '📲 Share Invite'
+                  : '📋 Copy Invite Link'}
             </button>
-
-            {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
-              <button
-                type="button"
-                onClick={shareInvite}
-                className="cursor-pointer select-none active:scale-95 text-xs font-bold px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-all"
-              >
-                📲 Share
-              </button>
-            )}
           </div>
         </div>
 
